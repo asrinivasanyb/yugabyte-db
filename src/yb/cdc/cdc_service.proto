@@ -123,6 +123,11 @@ enum CDCCheckpointType {
   EXPLICIT = 2; // Used for CDC
 }
 
+enum CDCSDKSnapshotType {
+  INTERNAL = 1; // Source universe will give the snapshot records
+  EXTERNAL = 2; // A separate universe will be setup to give the snapshot records
+}
+
 message CreateCDCStreamRequestPB {
   // Table to set up CDC on.
   optional string table_id = 1;
@@ -133,12 +138,14 @@ message CreateCDCStreamRequestPB {
   optional CDCCheckpointType checkpoint_type = 6;
   optional bool transactional = 7; // [default = false]
   optional YQLDatabase db_type = 8 [default = YQL_DATABASE_PGSQL] ;
+  optional CDCSDKSnapshotType consistent_snapshot = 9;
 }
 
 message CreateCDCStreamResponsePB {
   optional CDCErrorPB error = 1;
   optional bytes stream_id = 2;
   optional bytes db_stream_id = 3;
+  optional bytes external_snapshot_id = 4;
 }
 
 message DeleteCDCStreamRequestPB {

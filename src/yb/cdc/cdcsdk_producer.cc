@@ -12,6 +12,7 @@
 
 #include "yb/cdc/cdc_producer.h"
 
+#include "yb/cdc/cdc_service.h"
 #include "yb/cdc/xrepl_stream_metadata.h"
 
 #include "yb/client/client.h"
@@ -2022,16 +2023,23 @@ void AcknowledgeStreamedMultiShardTxn(
 
 Status HandleGetChangesForSnapshotRequest(
     const xrepl::StreamId& stream_id, const TabletId& tablet_id,
-    const CDCSDKCheckpointPB& from_op_id, const std::shared_ptr<tablet::TabletPeer>& tablet_peer,
+    const CDCSDKCheckpointPB& from_op_id, const CDCSDKCheckpointPB& consistent_snapshot_details,
+    const std::shared_ptr<tablet::TabletPeer>& tablet_peer,
     const EnumOidLabelMap& enum_oid_label_map, const CompositeAttsMap& composite_atts_map,
     client::YBClient* client, GetChangesResponsePB* resp, SchemaDetailsMap* cached_schema_details,
     const TableId& colocated_table_id, const tablet::TabletPtr& tablet_ptr, string* table_name,
     CDCSDKCheckpointPB* checkpoint, bool* checkpoint_updated, HybridTime* safe_hybrid_time_resp) {
-  auto txn_participant = tablet_ptr->transaction_participant();
+  // auto txn_participant = tablet_ptr->transaction_participant();
   ReadHybridTime time;
 
   // It is first call in snapshot then take snapshot.
   if ((from_op_id.key().empty()) && (from_op_id.snapshot_time() == 0)) {
+
+    auto term = consistent_snapshot_details.term();
+    auto index = consistent_snapshot_details.index();
+    auto snapshot_time = consistent_snapshot_details.snapshot_time();
+    
+    /*
     tablet::RemoveIntentsData data;
     RETURN_NOT_OK(tablet_peer->GetLastReplicatedData(&data));
 
@@ -2066,6 +2074,10 @@ Status HandleGetChangesForSnapshotRequest(
       SetCheckpoint(
           data.op_id.term, data.op_id.index, -1, "", time.read.ToUint64(), checkpoint, nullptr);
     }
+    */
+    
+    *safe_hybrid_time_resp = HybridTime::FromPB(snapshot_time);
+    SetCheckpoint(term, index, -1, "", snapshot_time, checkpoint, nullptr);
 
     *checkpoint_updated = true;
   } else {
@@ -2113,7 +2125,8 @@ Status HandleGetChangesForSnapshotRequest(
       LOG(INFO) << "Done with snapshot operation for tablet_id: " << tablet_id
                 << " stream_id: " << stream_id << ", from_op_id: " << from_op_id.DebugString();
       // Get the checkpoint or read the checkpoint from the table/cache.
-      SetCheckpoint(from_op_id.term(), from_op_id.index(), 0, "", 0, checkpoint, nullptr);
+      SetCheckpoint(from_op_id.term(), from_op_id.index(), 0, "",
+                    0, checkpoint, nullptr);
       *checkpoint_updated = true;
     } else {
       VLOG(1) << "Setting next sub doc key is " << sub_doc_key.Encode().ToStringBuffer();
@@ -2136,6 +2149,7 @@ Status GetChangesForCDCSDK(
     const xrepl::StreamId& stream_id,
     const TabletId& tablet_id,
     const CDCSDKCheckpointPB& from_op_id,
+    const CDCSDKCheckpointPB& consistent_snapshot_details,
     const StreamMetadata& stream_metadata,
     const std::shared_ptr<tablet::TabletPeer>& tablet_peer,
     const MemTrackerPtr& mem_tracker,
@@ -2153,8 +2167,9 @@ Status GetChangesForCDCSDK(
     const TableId& colocated_table_id,
     const CoarseTimePoint deadline) {
   OpId op_id{from_op_id.term(), from_op_id.index()};
-  VLOG(1) << "GetChanges request has from_op_id: " << from_op_id.DebugString()
+  LOG(INFO) << "GetChanges request has from_op_id: " << from_op_id.DebugString()
           << ", safe_hybrid_time: " << safe_hybrid_time_req
+          << ", consistent snapshot time: " << consistent_snapshot_details.snapshot_time()
           << ", wal_segment_index: " << wal_segment_index_req << " for tablet_id: " << tablet_id;
   ScopedTrackedConsumption consumption;
   CDCSDKCheckpointPB checkpoint;
@@ -2188,7 +2203,7 @@ Status GetChangesForCDCSDK(
   if (from_op_id.write_id() == -1) {
     snapshot_operation = true;
     RETURN_NOT_OK(HandleGetChangesForSnapshotRequest(
-        stream_id, tablet_id, from_op_id, tablet_peer, enum_oid_label_map, composite_atts_map,
+        stream_id, tablet_id, from_op_id, consistent_snapshot_details, tablet_peer, enum_oid_label_map, composite_atts_map,
         client, resp, cached_schema_details, colocated_table_id, tablet_ptr, &table_name,
         &checkpoint, &checkpoint_updated, &safe_hybrid_time_resp));
   } else if (!from_op_id.key().empty() && from_op_id.write_id() != 0) {
@@ -2352,7 +2367,7 @@ Status GetChangesForCDCSDK(
         if (FLAGS_cdc_enable_consistent_records && safe_hybrid_time_req >= 0 &&
             GetTransactionCommitTime(msg) <= (uint64_t)safe_hybrid_time_req &&
             msg->op_type() != yb::consensus::OperationType::SPLIT_OP) {
-          VLOG_WITH_FUNC(2)
+          LOG(INFO)
               << "Received a message in wal_segment with commit_time <= request safe time."
                  " Will ignore this message. consistent_stream_safe_time: "
               << consistent_stream_safe_time << ", safe_hybrid_time_req: " << safe_hybrid_time_req
@@ -2682,7 +2697,7 @@ Status GetChangesForCDCSDK(
         record_from_op_id);
   }
 
-  VLOG(1) << "Sending GetChanges response. cdcsdk_checkpoint: "
+  LOG(INFO) << "Sending GetChanges response. cdcsdk_checkpoint: "
           << resp->cdc_sdk_checkpoint().ShortDebugString()
           << ", safe_hybrid_time: " << resp->safe_hybrid_time()
           << ", wal_segment_index: " << resp->wal_segment_index()

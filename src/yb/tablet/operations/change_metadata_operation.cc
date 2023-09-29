@@ -42,6 +42,7 @@
 #include "yb/tablet/tablet.h"
 #include "yb/tablet/tablet_metadata.h"
 #include "yb/tablet/tablet_peer.h"
+#include "yb/tablet/transaction_participant.h"
 
 #include "yb/tserver/tserver_error.h"
 
@@ -141,6 +142,15 @@ Status ChangeMetadataOperation::Apply(int64_t leader_term, Status* complete_stat
     } else {
       LOG(WARNING) << "T " << tablet->tablet_id() << " Unable to alter wal retention secs: " << s;
     }
+
+    auto txn_participant = tablet->transaction_participant();
+    if (txn_participant) {
+      LOG(INFO) << " Blocking Intents GC from (" << op_id().term << "," << op_id().index << ")";
+      LOG(INFO) << " Duration for which Intents GC is blocked = " << request()->wal_retention_secs() << " seconds";
+      txn_participant->SetIntentRetainOpIdAndTime(
+          op_id(), MonoDelta::FromMilliseconds(request()->wal_retention_secs()*1000));
+    }
+
   }
 
   // Only perform one operation.

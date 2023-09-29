@@ -441,6 +441,9 @@ Status CatalogManager::CreateTransactionAwareSnapshot(
   CollectFlags flags{CollectFlag::kIncludeParentColocatedTable};
   flags.SetIf(CollectFlag::kAddIndexes, req.add_indexes())
        .SetIf(CollectFlag::kAddUDTypes, req.add_ud_types());
+
+  LOG(INFO) << __func__ << "Transaction aware CreateSnapshot request: " << req.ShortDebugString();
+     
   SysRowEntries entries = VERIFY_RESULT(CollectEntries(req.tables(), flags));
 
   // If client does not explicitly pass in a value then use a default
@@ -454,6 +457,13 @@ Status CatalogManager::CreateTransactionAwareSnapshot(
       entries, req.imported(), leader_ready_term(), deadline,
       retention_duration_hours));
   resp->set_snapshot_id(snapshot_id.data(), snapshot_id.size());
+
+  // CDC SDK External Snapshot request
+  if (req.has_cdc_sdk_stream_id()) {
+    RETURN_NOT_OK(CatalogManager::AddExternalSnapshotIdToCDCStream(
+      req.cdc_sdk_stream_id(), snapshot_id));
+  }
+
   return Status::OK();
 }
 
@@ -2854,7 +2864,7 @@ void CatalogManager::HandleCreateTabletSnapshotResponse(TabletInfo *tablet, bool
     current_snapshot_id_ = "";
   }
 
-  VLOG(1) << "Snapshot: " << snapshot->id()
+  LOG(INFO) << "Snapshot: " << snapshot->id()
           << " PB: " << l.mutable_data()->pb.DebugString()
           << " Complete " << num_tablets_complete << " tablets from " << tablet_snapshots->size();
 

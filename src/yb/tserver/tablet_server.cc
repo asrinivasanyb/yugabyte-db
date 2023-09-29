@@ -294,6 +294,12 @@ class CDCServiceContextImpl : public cdc::CDCServiceContext {
         tablet_server_.metric_entity(), tablet_server_.mem_tracker(), tablet_server_.messenger());
   }
 
+  server::Clock* Clock() const override {
+    return tablet_server_.Clock();
+  }
+
+
+
  private:
   TabletServer& tablet_server_;
 };

@@ -61,6 +61,7 @@ Status GetChangesForCDCSDK(
     const xrepl::StreamId& stream_id,
     const TableId& tablet_id,
     const CDCSDKCheckpointPB& op_id,
+    const CDCSDKCheckpointPB& external_snapshot_info,
     const StreamMetadata& record,
     const std::shared_ptr<tablet::TabletPeer>& tablet_peer,
     const std::shared_ptr<MemTracker>& mem_tracker,
@@ -76,7 +77,8 @@ Status GetChangesForCDCSDK(
     const int& wal_segment_index_req,
     int64_t* last_readable_opid_index = nullptr,
     const TableId& colocated_table_id = "",
-    const CoarseTimePoint deadline = CoarseTimePoint::max());
+    const CoarseTimePoint deadline = CoarseTimePoint::max()
+);
 
 using UpdateOnSplitOpFunc = std::function<Status(const consensus::ReplicateMsg&)>;
 

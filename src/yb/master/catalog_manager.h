@@ -1230,6 +1230,25 @@ class CatalogManager : public tserver::TabletPeerLookupIf,
       const CreateCDCStreamRequestPB* req, CreateCDCStreamResponsePB* resp, rpc::RpcContext* rpc,
       const LeaderEpoch& epoch);
 
+  Status CreateNewCDCStream(
+      const CreateCDCStreamRequestPB& req, const std::string& id_type_option_value,
+      CreateCDCStreamResponsePB* resp, rpc::RpcContext* rpc, const LeaderEpoch& epoch);
+  Status AddTableIdToCDCStream(const CreateCDCStreamRequestPB& req) EXCLUDES(mutex_);
+  
+  void PopulateCDCStateTableWithSnapshotTimeDetails(
+    const yb::TabletId&   tablet_id,
+    const std::string&    external_snapshot_id,
+    const yb::HybridTime& snapshot_hybrid_time) override;
+
+  Status PopulateCDCStateTableWithSnapshotSafeOpIdDetails(
+    const yb::TabletId&   tablet_id,
+    const std::string&    cdc_sdk_stream_id,
+    const yb::OpIdPB&     safe_opid,
+    const yb::HybridTime& proposed_snapshot_time) override;
+
+  Status AddExternalSnapshotIdToCDCStream(
+      const std::string& stream_id, const TxnSnapshotId& ext_snapshot_id ) EXCLUDES(mutex_);
+
   // Get the Table schema from system catalog table.
   Status GetTableSchemaFromSysCatalog(
       const GetTableSchemaFromSysCatalogRequestPB* req,
@@ -1776,7 +1795,8 @@ class CatalogManager : public tserver::TabletPeerLookupIf,
                                const AlterTableRequestPB* req = nullptr);
 
   Status SendAlterTableRequestInternal(
-      const scoped_refptr<TableInfo>& table, const TransactionId& txn_id, const LeaderEpoch& epoch);
+      const scoped_refptr<TableInfo>& table, const TransactionId& txn_id, const LeaderEpoch& epoch,
+      const AlterTableRequestPB* req = nullptr);
 
   // Starts the background task to send the SplitTablet RPC to the leader for the specified tablet.
   Status SendSplitTabletRequest(

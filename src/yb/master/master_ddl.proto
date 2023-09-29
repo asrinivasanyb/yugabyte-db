@@ -408,6 +408,11 @@ message AlterTableRequestPB {
 
   // Used for YSQL to notify DocDB of DDL changes that affect only PG metadata
   optional bool increment_schema_version = 11 [default = false];
+
+  // For CDCSDK Stream creation with consistent snapshot
+  optional bytes cdc_sdk_stream_id = 12;
+  optional uint32 cdc_sdk_intent_retention_secs = 13;
+  optional bool cdc_sdk_external_snapshot = 14 [default = false];
 }
 
 message AlterTableResponsePB {

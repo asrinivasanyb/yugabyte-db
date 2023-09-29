@@ -950,6 +950,20 @@ void TabletServiceAdminImpl::AlterSchema(const tablet::ChangeMetadataRequestPB* 
       tablet.tablet, tablet.peer->log());
   operation->AllocateRequest()->CopyFrom(*req);
 
+  if (req->has_wal_retention_secs()) {
+    tablet::RemoveIntentsData data;
+    auto status_opid = tablet.peer->GetLastReplicatedData(&data);
+
+    if (status_opid.ok()) {
+      LOG(INFO) << "Opid before the change_metadata op: term " << data.op_id.term << "index  " << data.op_id.index
+              << "time " << data.log_ht.ToUint64();
+      resp->mutable_snapshot_safe_op_id()->set_term(data.op_id.term);
+      resp->mutable_snapshot_safe_op_id()->set_index(data.op_id.index);
+    } else {
+      LOG(INFO) << " Could not get opid before change_metadata op";
+    }
+  }
+
   operation->set_completion_callback(
       MakeRpcOperationCompletionCallback(std::move(context), resp, server_->Clock()));
   operation->UsePermitToken(std::move(pause_writes));

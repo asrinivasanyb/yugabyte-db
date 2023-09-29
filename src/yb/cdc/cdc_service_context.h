@@ -15,6 +15,8 @@
 
 #include "yb/common/entity_ids_types.h"
 
+#include "yb/server/server_fwd.h"
+
 #include "yb/tablet/tablet_fwd.h"
 
 namespace yb {
@@ -40,6 +42,9 @@ class CDCServiceContext {
   // Creates async client initialiser with given name and default timeout.
   virtual std::unique_ptr<client::AsyncClientInitialiser> MakeClientInitializer(
       const std::string& client_name, MonoDelta default_timeout) const = 0;
+
+  // Get the Clock 
+  virtual server::Clock* Clock() const = 0;
 
   virtual ~CDCServiceContext() = default;
 };

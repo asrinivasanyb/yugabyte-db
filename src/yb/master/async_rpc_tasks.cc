@@ -24,6 +24,7 @@
 #include "yb/master/catalog_entity_info.h"
 #include "yb/master/catalog_manager_if.h"
 #include "yb/master/master.h"
+#include "yb/master/master_ddl.pb.h"
 #include "yb/master/sys_catalog.h"
 #include "yb/master/ts_descriptor.h"
 #include "yb/master/ts_manager.h"
@@ -951,6 +952,21 @@ void AsyncAlterTable::HandleResponse(int attempt) {
         Format(
             "$0 failed while running AsyncAlterTable::HandleResponse. Response $1", description(),
             resp_.ShortDebugString()));
+  
+    LOG(INFO) << "About to check for cdc_sdk_stream_id";
+    if (!cdc_sdk_stream_id_.empty()) {
+        LOG(INFO) << __func__ << " " << resp_.snapshot_safe_op_id().term() << " " << resp_.snapshot_safe_op_id().index();
+        LOG(INFO) << " CDC stream id " << cdc_sdk_stream_id_;
+        
+        WARN_NOT_OK(
+            master_->catalog_manager()->PopulateCDCStateTableWithSnapshotSafeOpIdDetails(
+                tablet_id(), cdc_sdk_stream_id_, resp_.snapshot_safe_op_id(),
+                HybridTime::FromPB(resp_.propagated_hybrid_time())),
+            Format(
+              "$0 failed while running AsyncAlterTable::HandleResponse. Response $1", description(),
+              resp_.ShortDebugString()));
+       
+    } 
   } else {
     VLOG_WITH_PREFIX(1) << "Task is not completed " << tablet_->ToString() << " for version "
                         << schema_version_;

@@ -58,11 +58,14 @@ constexpr size_t kCdcTabletIdIdx = 0;
 static const char* const kCdcStreamId = "stream_id";
 constexpr size_t kCdcStreamIdIdx = 1;
 static const char* const kCdcCheckpoint  = "checkpoint";
+static const char* const kCdcSnapshotTime = "snapshot_time";
+static const char* const kCdcSnapshotSafeOpid = "snapshot_safe_opid";
 static const char* const kCdcData = "data";
 static const char* const kCdcLastReplicationTime = "last_replication_time";
 static const char* const kCDCSDKSafeTime = "cdc_sdk_safe_time";
 static const char* const kCDCSDKActiveTime = "active_time";
 static const char* const kCDCSDKSnapshotKey = "snapshot_key";
+
 
 namespace {
 const client::YBTableName kCdcStateYBTableName(
@@ -129,6 +132,16 @@ void SerializeEntry(
   if (entry.snapshot_key) {
     client::AddMapEntryToColumn(get_map_value_pb(), kCDCSDKSnapshotKey, *entry.snapshot_key);
   }
+
+  if (entry.snapshot_time) {
+    cdc_table->AddStringColumnValue(
+        req, kCdcSnapshotTime, AsString(*entry.snapshot_time));
+  }
+
+  if (entry.snapshot_safe_opid) {
+    cdc_table->AddStringColumnValue(req, kCdcSnapshotSafeOpid,
+                                    entry.snapshot_safe_opid->ToString());
+  }
 }
 
 Status DeserializeColumn(
@@ -157,6 +170,10 @@ Status DeserializeColumn(
     }
 
     entry->snapshot_key = GetValueFromMap(map_value, kCDCSDKSnapshotKey);
+  } if (column_name == kCdcSnapshotSafeOpid) {
+    entry->snapshot_safe_opid = VERIFY_PARSE_COLUMN(OpId::FromString(column.string_value()));
+  } else if (column_name == kCdcSnapshotTime) {
+    entry->snapshot_time = VERIFY_PARSE_COLUMN(CheckedStol<uint64_t>(column.string_value()));
   }
 
   return Status::OK();
@@ -243,6 +260,8 @@ Result<master::CreateTableRequestPB> CDCStateTable::GenerateCreateCdcStateTableR
   schema_builder.AddColumn(kCdcData)
       ->Type(QLType::CreateTypeMap(DataType::STRING, DataType::STRING));
   schema_builder.AddColumn(kCdcLastReplicationTime)->Type(DataType::TIMESTAMP);
+  schema_builder.AddColumn(kCdcSnapshotSafeOpid)->Type(DataType::STRING);
+  schema_builder.AddColumn(kCdcSnapshotTime)->Type(DataType::STRING);
 
   client::YBSchema yb_schema;
   RETURN_NOT_OK(schema_builder.Build(&yb_schema));
@@ -434,8 +453,19 @@ CDCStateTableEntrySelector&& CDCStateTableEntrySelector::IncludeData() {
   return std::move(*this);
 }
 
+CDCStateTableEntrySelector&& CDCStateTableEntrySelector::IncludeSnapshotTime() {
+  columns_.insert(kCdcSnapshotTime);
+  return std::move(*this);
+}
+
+CDCStateTableEntrySelector&& CDCStateTableEntrySelector::IncludeSnapshotSafeOpid() {
+  columns_.insert(kCdcSnapshotSafeOpid);
+  return std::move(*this);
+}
+
 CDCStateTableEntrySelector&& CDCStateTableEntrySelector::IncludeAll() {
-  return std::move(IncludeCheckpoint().IncludeLastReplicationTime().IncludeData());
+  return std::move(IncludeCheckpoint().IncludeLastReplicationTime().IncludeData().
+                   IncludeSnapshotTime().IncludeSnapshotSafeOpid());
 }
 
 CDCStateTableEntrySelector&& CDCStateTableEntrySelector::IncludeActiveTime() {

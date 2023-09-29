@@ -84,6 +84,10 @@ struct CDCStateTableEntry {
   std::optional<uint64_t> cdc_sdk_safe_time;
   std::optional<std::string> snapshot_key;
 
+  // Consistent Snapshot support
+  std::optional<uint64_t> snapshot_time;
+  std::optional<OpId> snapshot_safe_opid;  
+
   std::string ToString() const;
 };
 
@@ -92,6 +96,8 @@ struct CDCStateTableEntrySelector {
   CDCStateTableEntrySelector&& IncludeCheckpoint();
   CDCStateTableEntrySelector&& IncludeLastReplicationTime();
   CDCStateTableEntrySelector&& IncludeData();
+  CDCStateTableEntrySelector&& IncludeSnapshotTime();
+  CDCStateTableEntrySelector&& IncludeSnapshotSafeOpid();
   CDCStateTableEntrySelector&& IncludeAll();
   CDCStateTableEntrySelector&& IncludeActiveTime();
   CDCStateTableEntrySelector&& IncludeCDCSDKSafeTime();

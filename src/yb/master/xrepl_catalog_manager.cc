@@ -774,6 +774,20 @@ Status CatalogManager::CreateCDCStream(
   } else {
     if (!source_type_found) {
       RETURN_INVALID_REQUEST_STATUS("source_type wasn't found in the request", (*req));
+
+    AlterTableRequestPB alter_table_req;
+    alter_table_req.mutable_table()->set_table_id(req->table_id());
+    alter_table_req.set_wal_retention_secs(FLAGS_cdc_wal_retention_time_secs);
+    if (req->has_db_stream_id() && req->has_consistent_snapshot()) {
+      LOG(INFO) << __func__ << " Setting the stream id in alter table request : " << req->db_stream_id();
+      alter_table_req.set_cdc_sdk_stream_id(req->db_stream_id());
+    }
+    AlterTableResponsePB alter_table_resp;
+    Status s = this->AlterTable(&alter_table_req, &alter_table_resp, rpc, epoch);
+    if (!s.ok()) {
+      return STATUS(
+          InternalError, "Unable to change the WAL retention time for table", req->table_id(),
+          MasterError(MasterErrorPB::INTERNAL_ERROR));
     }
 
     if (source_type_option_value != CDCRequestSource_Name(cdc::CDCRequestSource::CDCSDK)) {
@@ -1023,6 +1037,71 @@ Status CatalogManager::SetWalRetentionForTable(
         Format("Unable to change the WAL retention time for table, error: $0", s.message()),
         table_id, MasterError(MasterErrorPB::INTERNAL_ERROR));
   }
+void CatalogManager::PopulateCDCStateTableWithSnapshotTimeDetails(
+    const yb::TabletId& tablet_id,
+    const std::string&  external_snapshot_id,
+    const yb::HybridTime& snapshot_hybrid_time) {
+
+  LOG(INFO) << "Tablet id: " << tablet_id 
+            << ", Snapshot id:" << external_snapshot_id 
+            << ", snapshot time: " << snapshot_hybrid_time.ToUint64();
+  
+  SharedLock lock(mutex_);
+  for (const CDCStreamInfoMap::value_type& entry : cdc_stream_map_) {
+    auto ltm = entry.second->LockForRead();
+
+    if (ltm->is_deleting()) {
+      continue;
+    }
+
+    // external snapshot id
+    if (ltm->pb.has_external_snapshot_id()) {
+      if (ltm->pb.external_snapshot_id() == external_snapshot_id) {
+        xrepl::StreamId stream_id = entry.first;
+        LOG(INFO) << "Found the matching stream: " << stream_id.ToString();
+
+        {
+          cdc::CDCStateTableKey key(tablet_id, stream_id);
+          cdc::CDCStateTableEntry entry(std::move(key));
+          entry.snapshot_time = snapshot_hybrid_time.ToUint64();
+          entry.active_time = GetCurrentTimeMicros();
+
+          Status s = cdc_state_table_->UpdateEntries({entry});
+
+          if (!s.ok()) {
+            LOG(WARNING) << "Encoutered error while trying to add entry to cdc_state_table";
+          }
+        }
+      }
+    }
+  }
+}
+
+Status CatalogManager::PopulateCDCStateTableWithSnapshotSafeOpIdDetails(
+    const yb::TabletId& tablet_id,
+    const std::string&  cdc_sdk_stream_id,
+    const yb::OpIdPB&   safe_opid,
+    const yb::HybridTime& proposed_snapshot_time) {
+
+  LOG(INFO) << "Tablet id: " << tablet_id 
+            << ", Stream id:" << cdc_sdk_stream_id
+            << ", safe opid: " << safe_opid.term() << " and " << safe_opid.index()
+            << ", proposed snapshot time: " << proposed_snapshot_time.ToUint64();
+  
+  SharedLock lock(mutex_);
+ 
+  xrepl::StreamId stream_id = VERIFY_RESULT(xrepl::StreamId::FromString(cdc_sdk_stream_id));
+
+  std::vector<cdc::CDCStateTableEntry> cst_entries;
+  cst_entries.reserve(1);
+  cdc::CDCStateTableEntry cst_entry(tablet_id, stream_id);
+  cst_entry.snapshot_safe_opid = OpId::FromPB(safe_opid);
+  // cst_entry.cdc_sdk_safe_time = proposed_snapshot_time.ToUint64();
+  // cst_entry.active_time = GetCurrentTimeMicros();
+  cst_entries.push_back(std::move(cst_entry));
+
+  Status s = cdc_state_table_->UpsertEntries(cst_entries);
+  LOG(INFO) << __func__ << " inserting into cdc_state_table is " << s.IsOk();
 
   return Status::OK();
 }
@@ -1044,6 +1123,41 @@ Status CatalogManager::BackfillMetadataForCDC(
   }
 
   return Status::OK();
+Status CatalogManager::AddExternalSnapshotIdToCDCStream(
+    const std::string& stream_id,
+    const TxnSnapshotId& ext_snapshot_id) {
+
+  LOG(INFO) << __func__ << " Adding external snapshot id  " << ext_snapshot_id.ToString() << 
+  " to metadata for stream " << stream_id;
+
+  scoped_refptr<CDCStreamInfo> stream;
+  {
+    SharedLock lock(mutex_);
+    stream = FindPtrOrNull(
+        cdc_stream_map_, VERIFY_RESULT(xrepl::StreamId::FromString(stream_id)));
+  }
+
+  if (stream == nullptr) {
+    return STATUS(
+        NotFound, "Could not find CDC stream",
+        MasterError(MasterErrorPB::OBJECT_NOT_FOUND));
+  }
+
+  auto stream_lock = stream->LockForWrite();
+  auto* metadata = &stream_lock.mutable_data()->pb;
+  if (stream_lock->is_deleting()) {
+    return STATUS(
+        NotFound, "CDC stream has been deleted",
+        MasterError(MasterErrorPB::OBJECT_NOT_FOUND));
+  }
+  metadata->set_external_snapshot_id(ext_snapshot_id.ToString());
+
+  // Also need to persist changes in sys catalog.
+  RETURN_NOT_OK(sys_catalog_->Upsert(leader_ready_term(), stream));
+  stream_lock.Commit();
+  TRACE("Updated CDC stream in sys-catalog");
+  
+  return Status::OK();  
 }
 
 Status CatalogManager::DeleteCDCStream(
@@ -1838,7 +1952,6 @@ Status CatalogManager::ListCDCStreams(
   }
 
   SharedLock lock(mutex_);
-
   for (const CDCStreamInfoMap::value_type& entry : cdc_stream_map_) {
     bool skip_stream = false;
     bool id_type_option_present = false;

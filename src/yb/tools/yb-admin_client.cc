@@ -3752,6 +3752,9 @@ Status ClusterAdminClient::CreateCDCSDKDBStream(
         req.set_checkpoint_type(cdc::CDCCheckpointType::IMPLICIT);
   }
 
+  // Temporary - just set the CDCSDK Consistent Snapshot requirement to INTERNAL
+  req.set_consistent_snapshot(cdc::CDCSDKSnapshotType::INTERNAL);
+
   RpcController rpc;
   rpc.set_timeout(timeout_);
   RETURN_NOT_OK(cdc_proxy->CreateCDCStream(req, &resp, &rpc));
@@ -3762,6 +3765,10 @@ Status ClusterAdminClient::CreateCDCSDKDBStream(
   }
 
   cout << "CDC Stream ID: " << resp.db_stream_id() << endl;
+  if (resp.has_external_snapshot_id()) {
+    cout << "CDC External Snapshot ID: " << SnapshotIdToString(resp.external_snapshot_id()) << endl;
+  }
+
   return Status::OK();
 }
 
