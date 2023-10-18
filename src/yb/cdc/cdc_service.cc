@@ -3696,7 +3696,7 @@ Status CDCServiceImpl::UpdateCheckpointAndActiveTime(
       }
 
       VLOG(2) << "Updating cdc state table with: checkpoint: " << commit_op_id.ToString()
-              << ", last active time: " << last_active_time << ", safe time: " << cdc_sdk_safe_time
+              << ", last active time: " << last_active_time << ", safe time: " << cdc_sdk_safe_time.ToUint64()
               << ", for tablet: " << producer_tablet.tablet_id
               << ", and stream: " << producer_tablet.stream_id;
     }

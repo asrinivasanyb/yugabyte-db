@@ -387,6 +387,7 @@ void CDCSDKTestBase::InitCreateStreamRequest(
   create_req->set_record_type(record_type);
   create_req->set_record_format(CDCRecordFormat::PROTO);
   create_req->set_source_type(CDCSDK);
+  create_req->set_consistent_snapshot(cdc::CDCSDKSnapshotType::INTERNAL);
 }
 
 // This creates a DB stream on the database kNamespaceName by default.
@@ -401,6 +402,8 @@ Result<xrepl::StreamId> CDCSDKTestBase::CreateDBStream(
   InitCreateStreamRequest(&req, checkpoint_type, record_type);
 
   RETURN_NOT_OK(cdc_proxy_->CreateCDCStream(req, &resp, &rpc));
+  // Temporary - until sync version of createStream
+  SleepFor(MonoDelta::FromMilliseconds(1000));
 
   return xrepl::StreamId::FromString(resp.db_stream_id());
 }

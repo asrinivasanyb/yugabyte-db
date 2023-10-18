@@ -1219,7 +1219,11 @@ namespace cdc {
   }
 
   void CDCSDKYsqlTest::CheckCount(const uint32_t* expected_count, uint32_t* count) {
-    for (int i = 0; i < 6; i++) {
+    for (int i = 0; i < 6; i++) {      
+      LOG(INFO) << "Index being checked = " << i << " and actual count value = " << count[i];
+    }
+    for (int i = 0; i < 6; i++) {   
+      LOG(INFO) << "Index being checked = " << i;
       ASSERT_EQ(expected_count[i], count[i]);
     }
   }

@@ -2171,6 +2171,7 @@ Status GetChangesForCDCSDK(
           << ", safe_hybrid_time: " << safe_hybrid_time_req
           << ", consistent snapshot time: " << consistent_snapshot_details.snapshot_time()
           << ", wal_segment_index: " << wal_segment_index_req << " for tablet_id: " << tablet_id;
+
   ScopedTrackedConsumption consumption;
   CDCSDKCheckpointPB checkpoint;
   // 'checkpoint_updated' decides if the response checkpoint should be copied from
@@ -2364,8 +2365,18 @@ Status GetChangesForCDCSDK(
         // We should not stream messages we have already streamed again in this case,
         // except for "SPLIT_OP" messages which can appear with a hybrid_time lower than
         // safe_hybrid_time_req.
-        if (FLAGS_cdc_enable_consistent_records && safe_hybrid_time_req >= 0 &&
-            GetTransactionCommitTime(msg) <= (uint64_t)safe_hybrid_time_req &&
+        uint64_t commit_time_threshold = 0;
+        if (safe_hybrid_time_req >= 0) {
+          commit_time_threshold = std::max((uint64_t)safe_hybrid_time_req, consistent_snapshot_details.snapshot_time());
+        } else {
+          commit_time_threshold = consistent_snapshot_details.snapshot_time();
+        }
+
+        LOG(INFO) << "Commit time Threshold = " << commit_time_threshold;
+        LOG(INFO) << "Txn commit time       = " << GetTransactionCommitTime(msg);
+
+        if (FLAGS_cdc_enable_consistent_records &&
+            GetTransactionCommitTime(msg) <= commit_time_threshold &&
             msg->op_type() != yb::consensus::OperationType::SPLIT_OP) {
           LOG(INFO)
               << "Received a message in wal_segment with commit_time <= request safe time."
