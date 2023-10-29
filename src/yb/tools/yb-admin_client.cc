@@ -3725,7 +3725,8 @@ Status ClusterAdminClient::WriteUniverseKeyToFile(
 
 Status ClusterAdminClient::CreateCDCSDKDBStream(
     const TypedNamespaceName& ns, const std::string& checkpoint_type,
-    const std::string& record_type) {
+    const std::string& record_type,
+    const std::string& consistent_snapshot_option) {
   HostPort ts_addr = VERIFY_RESULT(GetFirstRpcAddressForTS());
   auto cdc_proxy = std::make_unique<cdc::CDCServiceProxy>(proxy_cache_.get(), ts_addr);
 
@@ -3752,8 +3753,11 @@ Status ClusterAdminClient::CreateCDCSDKDBStream(
         req.set_checkpoint_type(cdc::CDCCheckpointType::IMPLICIT);
   }
 
-  // Temporary - just set the CDCSDK Consistent Snapshot requirement to INTERNAL
-  req.set_consistent_snapshot(cdc::CDCSDKSnapshotType::INTERNAL);
+  if (consistent_snapshot_option == yb::ToString("USE_SNAPSHOT")) {
+    req.set_consistent_snapshot_option(cdc::CDCSDKSnapshotOption::USE_SNAPSHOT);
+  } else {
+    req.set_consistent_snapshot_option(cdc::CDCSDKSnapshotOption::NOEXPORT_SNAPSHOT);
+  }
 
   RpcController rpc;
   rpc.set_timeout(timeout_);

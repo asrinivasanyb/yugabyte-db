@@ -142,12 +142,6 @@ void AsyncTabletSnapshotOp::HandleResponse(int attempt) {
     case tserver::TabletSnapshotOpRequestPB::CREATE_ON_TABLET: {
       // TODO: this class should not know CatalogManager API,
       //       remove circular dependency between classes.
-      
-      master_->catalog_manager()->PopulateCDCStateTableWithSnapshotTimeDetails(
-          tablet_id(), 
-          SnapshotIdToString(snapshot_id_), 
-          snapshot_hybrid_time_);
-      
       master_->catalog_manager()->HandleCreateTabletSnapshotResponse(
           tablet_.get(), resp_.has_error());
       return;

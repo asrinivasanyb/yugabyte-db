@@ -1421,8 +1421,7 @@ Result<xrepl::StreamId> YBClient::CreateCDCStream(
   if (db_stream_id) {
     req.set_db_stream_id(db_stream_id.ToString());
   }
-  // Always request for consistent snapshot
-  req.set_consistent_snapshot(true);
+  
   req.mutable_options()->Reserve(narrow_cast<int>(options.size()));
   for (const auto& option : options) {
     auto new_option = req.add_options();
@@ -2221,40 +2220,6 @@ Status YBClient::CreateSnapshot(
     const std::vector<YBTableName>& tables, CreateSnapshotCallback callback) {
   auto deadline = CoarseMonoClock::Now() + default_admin_operation_timeout();
   return data_->CreateSnapshot(this, tables, deadline, std::move(callback));
-}
-
-Result<master::CreateSnapshotResponsePB> YBClient::CreateCDCSDKExternalSnapshot( 
-    const xrepl::StreamId& stream_id,
-    const std::vector<YBTableName>& tables) {
-  master::CreateSnapshotResponsePB resp;
-  master::CreateSnapshotRequestPB req;
-  LOG(INFO) << __func__ << " About to make RPC call to master to create CDCSDK external snapshot";
-
-  for (const YBTableName& table_name : tables) {
-      table_name.SetIntoTableIdentifierPB(req.add_tables());
-  }
-
-  req.set_transaction_aware(true);
-  req.set_cdc_sdk_stream_id(stream_id.ToString());
-
-  CALL_SYNC_LEADER_MASTER_RPC_EX(Backup, req, resp, CreateSnapshot);
-  LOG(INFO) << __func__ << " Started snapshot creation: " << TryFullyDecodeTxnSnapshotId(resp.snapshot_id()).ToString();
-
-  /*
-  // Temporary -- this should not be attempted till one is sure snapshot has successfully completed
-  // and there is no way we can be sure here.
-  RepeatedPtrField<master::SnapshotInfoPB> snapshots = 
-        VERIFY_RESULT(YBClient::ListSnapshots(TryFullyDecodeTxnSnapshotId(resp.snapshot_id()),
-                                                                          false));
-
-  for (const auto& snapshot : snapshots) {
-    auto snapshot_time= snapshot.entry().snapshot_hybrid_time();
-    LOG(INFO) << __func__ << " External snapshot time: " << snapshot_time;
-    resp.set_snapshot_time(snapshot_time);
-  }
-  */
-
-  return resp;
 }
 
 Status YBClient::DeleteSnapshot(

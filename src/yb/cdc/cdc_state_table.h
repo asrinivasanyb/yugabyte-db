@@ -86,7 +86,7 @@ struct CDCStateTableEntry {
 
   // Consistent Snapshot support
   std::optional<uint64_t> snapshot_time;
-  std::optional<OpId> snapshot_safe_opid;  
+  std::optional<OpId> snapshot_safe_opid;
 
   std::string ToString() const;
 };

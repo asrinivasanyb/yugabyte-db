@@ -127,6 +127,8 @@ DECLARE_bool(xcluster_wait_on_ddl_alter);
 DECLARE_int32(master_rpc_timeout_ms);
 DECLARE_bool(ysql_yb_enable_replication_commands);
 
+DECLARE_int64(cdc_intent_retention_ms);
+
 #define RETURN_ACTION_NOT_OK(expr, action) \
   RETURN_NOT_OK_PREPEND((expr), Format("An error occurred while $0", action))
 
@@ -750,7 +752,7 @@ Status CatalogManager::CreateCDCStream(
 
   if (req->has_table_id()) {
     if (id_type_option_value != cdc::kNamespaceId) {
-      RETURN_NOT_OK(SetWalRetentionForTable(req->table_id(), rpc, epoch));
+      RETURN_NOT_OK(SetWalRetentionForTable(*req, rpc, epoch));
       RETURN_NOT_OK(BackfillMetadataForCDC(req->table_id(), rpc, epoch));
     }
 
@@ -774,21 +776,9 @@ Status CatalogManager::CreateCDCStream(
   } else {
     if (!source_type_found) {
       RETURN_INVALID_REQUEST_STATUS("source_type wasn't found in the request", (*req));
+    }
 
-    AlterTableRequestPB alter_table_req;
-    alter_table_req.mutable_table()->set_table_id(req->table_id());
-    alter_table_req.set_wal_retention_secs(FLAGS_cdc_wal_retention_time_secs);
-    if (req->has_db_stream_id() && req->has_consistent_snapshot()) {
-      LOG(INFO) << __func__ << " Setting the stream id in alter table request : " << req->db_stream_id();
-      alter_table_req.set_cdc_sdk_stream_id(req->db_stream_id());
-    }
-    AlterTableResponsePB alter_table_resp;
-    Status s = this->AlterTable(&alter_table_req, &alter_table_resp, rpc, epoch);
-    if (!s.ok()) {
-      return STATUS(
-          InternalError, "Unable to change the WAL retention time for table", req->table_id(),
-          MasterError(MasterErrorPB::INTERNAL_ERROR));
-    }
+    
 
     if (source_type_option_value != CDCRequestSource_Name(cdc::CDCRequestSource::CDCSDK)) {
       RETURN_INVALID_REQUEST_STATUS("Namespace CDC stream is only supported for CDCSDK", (*req));
@@ -832,7 +822,7 @@ Status CatalogManager::CreateNewCDCStreamForNamespace(
   VLOG_WITH_FUNC(1) << Format("Creating CDCSDK stream for $0 tables", table_ids.size());
 
   for (const auto& table_id : table_ids) {
-    RETURN_NOT_OK(SetWalRetentionForTable(table_id, rpc, epoch));
+    RETURN_NOT_OK(SetWalRetentionForTable(req, rpc, epoch));
     RETURN_NOT_OK(BackfillMetadataForCDC(table_id, rpc, epoch));
   }
 
@@ -1013,7 +1003,8 @@ Status CatalogManager::AddTableIdToCDCStream(const CreateCDCStreamRequestPB& req
 }
 
 Status CatalogManager::SetWalRetentionForTable(
-    const TableId& table_id, rpc::RpcContext* rpc, const LeaderEpoch& epoch) {
+  const CreateCDCStreamRequestPB& req, rpc::RpcContext* rpc, const LeaderEpoch& epoch) {
+  auto table_id = req.table_id();
   VLOG_WITH_FUNC(4) << "Setting WAL retention for table: " << table_id;
 
   auto table = VERIFY_RESULT(FindTableById(table_id));
@@ -1028,7 +1019,32 @@ Status CatalogManager::SetWalRetentionForTable(
 
   AlterTableRequestPB alter_table_req;
   alter_table_req.mutable_table()->set_table_id(table_id);
-  alter_table_req.set_wal_retention_secs(GetAtomicFlag(&FLAGS_cdc_wal_retention_time_secs));
+  alter_table_req.set_wal_retention_secs(FLAGS_cdc_wal_retention_time_secs);
+  if (req.has_db_stream_id()) {
+    alter_table_req.set_cdc_sdk_stream_id(req.db_stream_id());
+    alter_table_req.set_cdc_intent_retention_ms(GetAtomicFlag(&FLAGS_cdc_intent_retention_ms));
+
+    bool consistent_snapshot_option_use;
+    bool record_type_option_all;
+
+    for (auto option : req.options()) {
+      if (option.key() == cdc::kConsistentSnapshotOption) {
+        consistent_snapshot_option_use =
+          option.value() == CDCSDKSnapshotOption_Name(cdc::CDCSDKSnapshotOption::USE_SNAPSHOT);
+      } else if (option.key() == cdc::kRecordType) {
+        record_type_option_all =
+          option.value() == CDCRecordType_Name(cdc::CDCRecordType::ALL);
+      }
+    }
+    auto require_history_cutoff = consistent_snapshot_option_use && record_type_option_all;
+    alter_table_req.set_cdc_require_history_cutoff(require_history_cutoff);
+
+    LOG(INFO) << "CDC CreateStream: ALTER TABLE request " 
+              << "stream_id = " << alter_table_req.cdc_sdk_stream_id()
+              << "wal_retention_secs = " << alter_table_req.wal_retention_secs()
+              << "cdc_intent_retention_ms = " << alter_table_req.cdc_intent_retention_ms()
+              << "cdc_require_history_cutoff = " << alter_table_req.cdc_require_history_cutoff(); 
+  }
   AlterTableResponsePB alter_table_resp;
   Status s = this->AlterTable(&alter_table_req, &alter_table_resp, rpc, epoch);
   if (!s.ok()) {
@@ -1037,6 +1053,10 @@ Status CatalogManager::SetWalRetentionForTable(
         Format("Unable to change the WAL retention time for table, error: $0", s.message()),
         table_id, MasterError(MasterErrorPB::INTERNAL_ERROR));
   }
+
+  return Status::OK();
+}
+
 void CatalogManager::PopulateCDCStateTableWithSnapshotTimeDetails(
     const yb::TabletId& tablet_id,
     const std::string&  external_snapshot_id,
@@ -1123,6 +1143,8 @@ Status CatalogManager::BackfillMetadataForCDC(
   }
 
   return Status::OK();
+}
+
 Status CatalogManager::AddExternalSnapshotIdToCDCStream(
     const std::string& stream_id,
     const TxnSnapshotId& ext_snapshot_id) {

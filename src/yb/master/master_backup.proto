@@ -55,14 +55,12 @@ message CreateSnapshotRequestPB {
   // before it is deleted. Set to -1 to retain indefinitely until
   // an explicit delete_snapshot.
   optional int32 retention_duration_hours = 7;
-  // For CDC SDK external snapshots
-  optional bytes cdc_sdk_stream_id = 8;
 }
 
 message CreateSnapshotResponsePB {
   optional MasterErrorPB error = 1;
+
   optional bytes snapshot_id = 2;
-  optional uint64 snapshot_time = 3;
 }
 
 message SnapshotInfoPB {

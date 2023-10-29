@@ -1233,8 +1233,7 @@ class CatalogManager : public tserver::TabletPeerLookupIf,
   Status CreateNewCDCStream(
       const CreateCDCStreamRequestPB& req, const std::string& id_type_option_value,
       CreateCDCStreamResponsePB* resp, rpc::RpcContext* rpc, const LeaderEpoch& epoch);
-  Status AddTableIdToCDCStream(const CreateCDCStreamRequestPB& req) EXCLUDES(mutex_);
-  
+
   void PopulateCDCStateTableWithSnapshotTimeDetails(
     const yb::TabletId&   tablet_id,
     const std::string&    external_snapshot_id,
@@ -2672,7 +2671,7 @@ class CatalogManager : public tserver::TabletPeerLookupIf,
   Status AddTableIdToCDCStream(const CreateCDCStreamRequestPB& req) EXCLUDES(mutex_);
 
   Status SetWalRetentionForTable(
-      const TableId& table_id, rpc::RpcContext* rpc, const LeaderEpoch& epoch);
+      const CreateCDCStreamRequestPB& req, rpc::RpcContext* rpc, const LeaderEpoch& epoch);
   Status BackfillMetadataForCDC(
       const TableId& table_id, rpc::RpcContext* rpc, const LeaderEpoch& epoch);
 

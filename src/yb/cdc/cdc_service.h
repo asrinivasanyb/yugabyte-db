@@ -76,6 +76,7 @@ static const char* const kRecordFormat = "record_format";
 static const char* const kRetentionSec = "retention_sec";
 static const char* const kSourceType = "source_type";
 static const char* const kCheckpointType = "checkpoint_type";
+static const char* const kConsistentSnapshotOption = "consistent_snapshot_option";
 static const char* const kStreamState = "state";
 static const char* const kNamespaceId = "NAMESPACEID";
 static const char* const kCDCSDKSnapshotDoneKey = "snapshot_done_key";

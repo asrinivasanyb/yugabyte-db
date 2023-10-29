@@ -617,11 +617,12 @@ TEST_F(CDCSDKYsqlTest, YB_DISABLE_TEST_IN_TSAN(InsertedRowInbetweenSnapshot)) {
   google::protobuf::RepeatedPtrField<master::TabletLocationsPB> tablets;
   ASSERT_OK(test_client()->GetTablets(table, 0, &tablets, nullptr));
   ASSERT_EQ(tablets.size(), 1);
+
+  ASSERT_OK(WriteRows(1 /* start */, 101 /* end */, &test_cluster_));
+
   xrepl::StreamId stream_id = ASSERT_RESULT(CreateDBStream(IMPLICIT));
   auto set_resp = ASSERT_RESULT(SetCDCCheckpoint(stream_id, tablets, OpId::Invalid()));
   ASSERT_FALSE(set_resp.has_error());
-
-  ASSERT_OK(WriteRows(1 /* start */, 101 /* end */, &test_cluster_));
 
   GetChangesResponsePB change_resp = ASSERT_RESULT(GetChangesFromCDCSnapshot(stream_id, tablets));
   ASSERT_OK(WriteRows(101 /* start */, 201 /* end */, &test_cluster_));

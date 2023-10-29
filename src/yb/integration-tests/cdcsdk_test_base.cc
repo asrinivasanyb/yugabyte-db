@@ -387,7 +387,7 @@ void CDCSDKTestBase::InitCreateStreamRequest(
   create_req->set_record_type(record_type);
   create_req->set_record_format(CDCRecordFormat::PROTO);
   create_req->set_source_type(CDCSDK);
-  create_req->set_consistent_snapshot(cdc::CDCSDKSnapshotType::INTERNAL);
+  create_req->set_consistent_snapshot_option(cdc::CDCSDKSnapshotOption::USE_SNAPSHOT);
 }
 
 // This creates a DB stream on the database kNamespaceName by default.

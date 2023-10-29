@@ -937,9 +937,6 @@ class YBClient {
   Status CreateSnapshot(
       const std::vector<YBTableName>& tables, CreateSnapshotCallback callback);
 
-  Result<master::CreateSnapshotResponsePB> CreateCDCSDKExternalSnapshot(
-      const xrepl::StreamId& stream_id, const std::vector<YBTableName>& tables);
-
   Status DeleteSnapshot(const TxnSnapshotId& snapshot_id, master::DeleteSnapshotResponsePB* resp);
 
   Result<google::protobuf::RepeatedPtrField<master::SnapshotInfoPB>> ListSnapshots(

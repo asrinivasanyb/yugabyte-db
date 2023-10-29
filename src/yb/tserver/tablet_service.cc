@@ -948,20 +948,30 @@ void TabletServiceAdminImpl::AlterSchema(const tablet::ChangeMetadataRequestPB* 
   }
   auto operation = std::make_unique<ChangeMetadataOperation>(
       tablet.tablet, tablet.peer->log());
-  operation->AllocateRequest()->CopyFrom(*req);
+  auto request = operation->AllocateRequest();
+  request->CopyFrom(*req);
 
   if (req->has_wal_retention_secs()) {
     tablet::RemoveIntentsData data;
     auto status_opid = tablet.peer->GetLastReplicatedData(&data);
 
     if (status_opid.ok()) {
-      LOG(INFO) << "Opid before the change_metadata op: term " << data.op_id.term << "index  " << data.op_id.index
+      LOG(INFO) << "Opid before the change_metadata operation is submitted : term " << data.op_id.term << "index  " << data.op_id.index
               << "time " << data.log_ht.ToUint64();
       resp->mutable_snapshot_safe_op_id()->set_term(data.op_id.term);
       resp->mutable_snapshot_safe_op_id()->set_index(data.op_id.index);
     } else {
       LOG(INFO) << " Could not get opid before change_metadata op";
     }
+    /*
+    // Get the current time and propose that as lower bound of snapshot_time to the followers
+    tablet_peer->setCDCSDKHistoryRetention(server_->Clock()->Now().ToUint64());
+    // At this point, it is guaranteed that a history cutoff time cannot be greater than the time just set above
+    // Now, propose a lower bound of the snapshot time to the followers. 
+    request->set_snapshot_time_lower_bound(server_->Clock()->Now().ToUint64());        
+    // During the "APPLY" of the "ChangeMetadata" operation, the followers will also prevent
+    // history cutoff beyond the snapshot_time_lower_bound suggested by the follower.
+    */
   }
 
   operation->set_completion_callback(

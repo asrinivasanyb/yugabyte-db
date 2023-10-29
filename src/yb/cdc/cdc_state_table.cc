@@ -170,7 +170,7 @@ Status DeserializeColumn(
     }
 
     entry->snapshot_key = GetValueFromMap(map_value, kCDCSDKSnapshotKey);
-  } if (column_name == kCdcSnapshotSafeOpid) {
+  } else if (column_name == kCdcSnapshotSafeOpid) {
     entry->snapshot_safe_opid = VERIFY_PARSE_COLUMN(OpId::FromString(column.string_value()));
   } else if (column_name == kCdcSnapshotTime) {
     entry->snapshot_time = VERIFY_PARSE_COLUMN(CheckedStol<uint64_t>(column.string_value()));

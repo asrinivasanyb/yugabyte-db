@@ -458,12 +458,6 @@ Status CatalogManager::CreateTransactionAwareSnapshot(
       retention_duration_hours));
   resp->set_snapshot_id(snapshot_id.data(), snapshot_id.size());
 
-  // CDC SDK External Snapshot request
-  if (req.has_cdc_sdk_stream_id()) {
-    RETURN_NOT_OK(CatalogManager::AddExternalSnapshotIdToCDCStream(
-      req.cdc_sdk_stream_id(), snapshot_id));
-  }
-
   return Status::OK();
 }
 
