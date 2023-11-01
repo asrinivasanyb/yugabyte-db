@@ -578,6 +578,8 @@ Tablet::Tablet(const TabletInitData& data)
     mem_tracker_->SetMetricEntity(tablet_metrics_entity_);
   }
 
+  tablet_peer_ = data.tablet_peer;
+
   auto table_info = metadata_->primary_table_info();
   bool has_index = !table_info->index_map->empty();
   bool transactional = data.metadata->schema()->table_properties().is_transactional();

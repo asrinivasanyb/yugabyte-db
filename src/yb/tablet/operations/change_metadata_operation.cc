@@ -137,55 +137,44 @@ Status ChangeMetadataOperation::Apply(int64_t leader_term, Status* complete_stat
     // We don't consider wal retention changes as another operation because this value is always
     // sent together with the schema, as long as it has been changed in the master's sys-catalog.
     auto s = tablet->AlterWalRetentionSecs(this);
-    if (s.ok()) {
-      // 3 parts to WAL retention
-      //  1. wal_retention_secs on the WAL log
-      //  2. cdc_min_replicated index that is used by log to determine if CDCSDK is using a segment
-      //  3. for the log_cache 
+    if (s.ok()) { 
       log->set_wal_retention_secs(request()->wal_retention_secs());
-      /*
-      tablet_peer->set_cdc_min_replicated_index(op_id());
-      tablet_peer->GetConsensus())->UpdateCDCConsumerOpId(op_id());
-      */
     } else {
       LOG(WARNING) << "T " << tablet->tablet_id() << " Unable to alter wal retention secs: " << s;
     }
-    /*
+  }
+
+  // CDCSDK Create Stream Context
+  // Set WAL/Intents/History Retention Barriers
+  if (request()->has_cdc_sdk_stream_id()) {
+    LOG(INFO) << " Setting all retention barriers for stream "
+              << request()->cdc_sdk_stream_id();
+
+    auto tablet_peer = tablet->tablet_peer();
+
+    // WAL retention has 2 other aspects
+    //  1. cdc_min_replicated_index : indicates if a WAL segment is being used by CDC 
+    //                                and thus impacts GC of the WAL segments
+    //  2. cdc_consumer_opid : Impacts eviction of messages from log cache
+    RETURN_NOT_OK(tablet_peer->set_cdc_min_replicated_index(op_id().index));
+    // VERIFY_RESULT(tablet_peer->GetConsensus());
+      
     // Intent Retention and History Retention
-    tablet_peer->SetCDCSDKRetainOpIdAndTime(op_id(), MonoDelta::FromMilliseconds(request()->cdc_intent_retention_ms()*1000), 
-                                            request()->snapshot_time_lower_bound())
+    auto intent_retention_duration = 
+      MonoDelta::FromMilliseconds(request()->cdc_intent_retention_ms());
+    LOG(INFO) << " Blocking Intents GC from (" 
+               << op_id().term << "," << op_id().index << ")"
+               << " for a duration of " << intent_retention_duration.ToSeconds() << " seconds";
 
-
-    // The main point here is as follows
-    //   1) The snpahsot time, ST, is chosen by master AFTER the ALTER TABLE operation has returned successfully
-    //   2) Each tablet leader, picks a snapshot_time_lower_bound, say T. 
-    //   3) The tablet leader has indeed finished APPLY of the ChangeMetadataOperation (and thus successfully majority replicated also)
-    //      BEFORE the ALTER TABLE can be considered successful
-    //   4) Thus, T < ST
-    //   5) In the ChangeMetadataOperation APPLY by the tablet leader
-    //       5.1) WAL is protected as of the CM Opid
-    //       5.2) Intents are also protected as of the CM Opid
-    //       5.3) History is retained as of T (which is older than ST)
-    //   6) Every txn, with commit_time > ST, will have an OpiD > CM Opid (causality order)
-    //   7) Thus, the leader will be able to honor the promise
-    //       7.1) Snapshot will be available as of time ST (as history available from T < ST)
-    //       7.2) The APPLY for multi shard txns will be processed AFTER the ChangeMetadataOperation, hence intents blocked as of CM OPid will
-    //            not be GCed
-    //   8) The followers, hwoever, may not get to processing the ChangeMetadataOperation before ST (as they might have been down)
-    //   9) However, from (6) above, all txns with commit time > ST, will only be processed after the ChangeMetadataOperation
-    //  10) Any history cutoff value proposed by the leader will also be < T
-    //  11) Thus, the follower will also be able to honor the promise of delivering snapshot as of ST and all subsequent changes (if it were to become a leader)
-
-  */
-
-    auto txn_participant = tablet->transaction_participant();
-    if (txn_participant) {
-      LOG(INFO) << " Blocking Intents GC from (" << op_id().term << "," << op_id().index << ")";
-      LOG(INFO) << " Duration for which Intents GC is blocked = " << request()->wal_retention_secs() << " seconds";
-      txn_participant->SetIntentRetainOpIdAndTime(
-          op_id(), MonoDelta::FromMilliseconds(request()->wal_retention_secs()*1000));
+    if (request()->has_cdc_require_history_cutoff() && request()->cdc_require_history_cutoff()) {
+      // History retention barrier also needs to be set
+      LOG(INFO) << "History retention barrier set at " << hybrid_time().ToUint64();
+      RETURN_NOT_OK(tablet_peer->SetCDCSDKRetainOpIdAndTime(op_id(), intent_retention_duration,
+                                                            hybrid_time()));
+    } else {
+      // Only set Intent retention barrier, no history retention barrier is to be set
+      RETURN_NOT_OK(tablet_peer->SetCDCSDKRetainOpIdAndTime(op_id(), intent_retention_duration));
     }
-    
   }
 
   // Only perform one operation.

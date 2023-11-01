@@ -1234,19 +1234,11 @@ class CatalogManager : public tserver::TabletPeerLookupIf,
       const CreateCDCStreamRequestPB& req, const std::string& id_type_option_value,
       CreateCDCStreamResponsePB* resp, rpc::RpcContext* rpc, const LeaderEpoch& epoch);
 
-  void PopulateCDCStateTableWithSnapshotTimeDetails(
-    const yb::TabletId&   tablet_id,
-    const std::string&    external_snapshot_id,
-    const yb::HybridTime& snapshot_hybrid_time) override;
-
   Status PopulateCDCStateTableWithSnapshotSafeOpIdDetails(
     const yb::TabletId&   tablet_id,
     const std::string&    cdc_sdk_stream_id,
     const yb::OpIdPB&     safe_opid,
     const yb::HybridTime& proposed_snapshot_time) override;
-
-  Status AddExternalSnapshotIdToCDCStream(
-      const std::string& stream_id, const TxnSnapshotId& ext_snapshot_id ) EXCLUDES(mutex_);
 
   // Get the Table schema from system catalog table.
   Status GetTableSchemaFromSysCatalog(
@@ -2666,10 +2658,14 @@ class CatalogManager : public tserver::TabletPeerLookupIf,
   Status CreateNewXReplStream(
       const CreateCDCStreamRequestPB& req, CreateNewCDCStreamMode mode,
       const std::vector<TableId>& table_ids, const std::optional<const NamespaceId>& namespace_id,
-      CreateCDCStreamResponsePB* resp, const LeaderEpoch& epoch);
+      CreateCDCStreamResponsePB* resp, const LeaderEpoch& epoch, rpc::RpcContext* rpc);
 
   Status AddTableIdToCDCStream(const CreateCDCStreamRequestPB& req) EXCLUDES(mutex_);
 
+  Status SetAllRetentionBarriers(
+      const CreateCDCStreamRequestPB& req, rpc::RpcContext* rpc, const LeaderEpoch& epoch,
+      const std::vector<TableId>& table_ids, const xrepl::StreamId& stream_id,
+      const bool has_consistent_snapshot_option, bool require_history_cutoff);
   Status SetWalRetentionForTable(
       const CreateCDCStreamRequestPB& req, rpc::RpcContext* rpc, const LeaderEpoch& epoch);
   Status BackfillMetadataForCDC(

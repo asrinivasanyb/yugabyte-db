@@ -957,6 +957,7 @@ void AsyncAlterTable::HandleResponse(int attempt) {
     if (!cdc_sdk_stream_id_.empty()) {
         LOG(INFO) << __func__ << " " << resp_.snapshot_safe_op_id().term() << " " << resp_.snapshot_safe_op_id().index();
         LOG(INFO) << " CDC stream id " << cdc_sdk_stream_id_;
+        LOG(INFO) << " Propagated Hybrid Time " << HybridTime::FromPB(resp_.propagated_hybrid_time()).ToUint64();
         
         WARN_NOT_OK(
             master_->catalog_manager()->PopulateCDCStateTableWithSnapshotSafeOpIdDetails(
@@ -994,6 +995,13 @@ bool AsyncAlterTable::SendRequest(int attempt) {
 
     if (l->pb.has_wal_retention_secs()) {
       req.set_wal_retention_secs(l->pb.wal_retention_secs());
+    }
+
+    // Support for CDC SDK Create Stream context
+    if (!cdc_sdk_stream_id_.empty()) {
+      req.set_cdc_sdk_stream_id(cdc_sdk_stream_id_);
+      req.set_cdc_intent_retention_ms(cdc_intent_retention_ms_);
+      req.set_cdc_require_history_cutoff(cdc_require_history_cutoff_);
     }
 
     req.mutable_schema()->CopyFrom(l->pb.schema());

@@ -100,6 +100,7 @@ TabletInitData TabletHarness::MakeTabletInitData(const RaftGroupMetadataPtr& met
       .log_anchor_registry = new log::LogAnchorRegistry(),
       .tablet_options = TabletOptions(),
       .log_prefix_suffix = std::string(),
+      .tablet_peer = nullptr,
       .transaction_participant_context = nullptr,
       .local_tablet_filter = client::LocalTabletFilter(),
       .transaction_coordinator_context = nullptr,

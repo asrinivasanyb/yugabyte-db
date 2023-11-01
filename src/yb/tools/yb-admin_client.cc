@@ -3769,9 +3769,6 @@ Status ClusterAdminClient::CreateCDCSDKDBStream(
   }
 
   cout << "CDC Stream ID: " << resp.db_stream_id() << endl;
-  if (resp.has_external_snapshot_id()) {
-    cout << "CDC External Snapshot ID: " << SnapshotIdToString(resp.external_snapshot_id()) << endl;
-  }
 
   return Status::OK();
 }

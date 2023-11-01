@@ -10558,11 +10558,20 @@ Status CatalogManager::SendAlterTableRequestInternal(
     const AlterTableRequestPB* req) {
   auto tablets = table->GetTablets();
   for (const scoped_refptr<TabletInfo>& tablet : tablets) {
-    LOG(INFO) << " CDC stream id context : " << req->cdc_sdk_stream_id();
-    std::string stream_id = req->cdc_sdk_stream_id();
-    auto call =
-        std::make_shared<AsyncAlterTable>(master_, AsyncTaskPool(), tablet, table, txn_id, epoch, 
-                                          stream_id);
+     std::shared_ptr<AsyncAlterTable> call;
+
+    // Is there a CDC SDK Create Stream context for this call
+    if (req->has_cdc_sdk_stream_id()) {
+      LOG(INFO) << " CDC stream id context : " << req->cdc_sdk_stream_id();
+      std::string stream_id = req->cdc_sdk_stream_id();
+      call = std::make_shared<AsyncAlterTable>(master_, AsyncTaskPool(), tablet, table,
+                                               txn_id, epoch, 
+                                               stream_id, req->cdc_intent_retention_ms(),
+                                               req->cdc_require_history_cutoff());
+    } else {
+      call = std::make_shared<AsyncAlterTable>(master_, AsyncTaskPool(), tablet, table,
+                                               txn_id, epoch);
+    }
     table->AddTask(call);
     if (PREDICT_FALSE(FLAGS_TEST_slowdown_alter_table_rpcs_ms > 0)) {
       LOG(INFO) << "Sleeping for " << tablet->id() << " " << FLAGS_TEST_slowdown_alter_table_rpcs_ms

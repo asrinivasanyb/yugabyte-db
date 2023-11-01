@@ -205,6 +205,7 @@ Status MiniSysCatalogTable::OpenTablet(const scoped_refptr<tablet::RaftGroupMeta
       .log_anchor_registry = nullptr,
       .tablet_options = tablet_options_,
       .log_prefix_suffix = "",
+      .tablet_peer = tablet_peer_,
       .transaction_participant_context = tablet_peer_.get(),
       .local_tablet_filter = nullptr,
       .transaction_coordinator_context = nullptr,

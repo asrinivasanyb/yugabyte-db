@@ -580,6 +580,10 @@ class Tablet : public AbstractTablet,
     return intentsdb_statistics_;
   }
 
+  TabletPeerPtr tablet_peer() {
+    return tablet_peer_;
+  }
+
   TransactionCoordinator* transaction_coordinator() {
     return transaction_coordinator_.get();
   }
@@ -1141,6 +1145,8 @@ class Tablet : public AbstractTablet,
 
   // Used by Alter/Schema-change ops to pause new write ops from being submitted.
   RWOperationCounter write_ops_being_submitted_counter_;
+
+  TabletPeerPtr tablet_peer_;
 
   std::unique_ptr<TransactionCoordinator> transaction_coordinator_;
 

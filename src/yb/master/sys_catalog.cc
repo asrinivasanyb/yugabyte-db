@@ -604,6 +604,7 @@ Status SysCatalogTable::OpenTablet(const scoped_refptr<tablet::RaftGroupMetadata
       .log_anchor_registry = tablet_peer()->log_anchor_registry(),
       .tablet_options = tablet_options,
       .log_prefix_suffix = " P " + tablet_peer()->permanent_uuid(),
+      .tablet_peer = tablet_peer(),
       .transaction_participant_context = tablet_peer().get(),
       .local_tablet_filter = client::LocalTabletFilter(),
       // This is only required if the sys catalog tablet is also acting as a transaction status

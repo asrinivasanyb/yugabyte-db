@@ -75,6 +75,7 @@ struct TabletInitData {
   log::LogAnchorRegistryPtr log_anchor_registry;
   const TabletOptions tablet_options;
   std::string log_prefix_suffix;
+  TabletPeerPtr tablet_peer = nullptr;
   TransactionParticipantContext* transaction_participant_context = nullptr;
   client::LocalTabletFilter local_tablet_filter;
   TransactionCoordinatorContext* transaction_coordinator_context = nullptr;
