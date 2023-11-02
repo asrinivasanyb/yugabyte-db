@@ -753,13 +753,22 @@ namespace cdc {
       const google::protobuf::RepeatedPtrField<master::TabletLocationsPB>& tablets,
       const GetChangesResponsePB* change_resp,
       const TableId table_id) {
+    
+    return UpdateCheckpoint(stream_id, tablets, change_resp->cdc_sdk_checkpoint(), table_id);
+  }
+
+  Result<GetChangesResponsePB> CDCSDKYsqlTest::UpdateCheckpoint(
+      const xrepl::StreamId& stream_id,
+      const google::protobuf::RepeatedPtrField<master::TabletLocationsPB>& tablets,
+      const CDCSDKCheckpointPB& resp_checkpoint,
+      const TableId table_id) {
     GetChangesRequestPB change_req2;
     GetChangesResponsePB change_resp2;
     PrepareChangeRequest(
-        &change_req2, stream_id, tablets, 0, change_resp->cdc_sdk_checkpoint().index(),
-        change_resp->cdc_sdk_checkpoint().term(), change_resp->cdc_sdk_checkpoint().key(),
-        change_resp->cdc_sdk_checkpoint().write_id(),
-        change_resp->cdc_sdk_checkpoint().snapshot_time(), table_id);
+        &change_req2, stream_id, tablets, 0, resp_checkpoint.index(),
+        resp_checkpoint.term(), resp_checkpoint.key(),
+        resp_checkpoint.write_id(),
+        resp_checkpoint.snapshot_time(), table_id);
     RpcController get_changes_rpc;
     RETURN_NOT_OK(cdc_proxy_->GetChanges(change_req2, &change_resp2, &get_changes_rpc));
     if (change_resp2.has_error()) {
@@ -986,6 +995,33 @@ namespace cdc {
         cdc_proxy_->GetCheckpoint(get_checkpoint_req, &get_checkpoint_resp, &get_checkpoint_rpc));
 
     return get_checkpoint_resp;
+  }
+
+  Result<CDCSDKCheckpointPB> CDCSDKYsqlTest::GetCDCSDKSnapshotCheckpoint(
+      const xrepl::StreamId& stream_id, const TabletId& tablet_id, const TableId& table_id) {
+    RpcController get_checkpoint_rpc;
+    GetCheckpointRequestPB get_checkpoint_req;
+    GetCheckpointResponsePB get_checkpoint_resp;
+    auto deadline = CoarseMonoClock::now() + test_client()->default_rpc_timeout();
+    get_checkpoint_rpc.set_deadline(deadline);
+    get_checkpoint_req.set_stream_id(stream_id.ToString());
+
+    if (!table_id.empty()) {
+      get_checkpoint_req.set_table_id(table_id);
+    }
+
+    get_checkpoint_req.set_tablet_id(tablet_id);
+    RETURN_NOT_OK(
+        cdc_proxy_->GetCheckpoint(get_checkpoint_req, &get_checkpoint_resp, &get_checkpoint_rpc));
+
+    CDCSDKCheckpointPB checkpoint_resp;
+    checkpoint_resp.set_index(get_checkpoint_resp.checkpoint().op_id().index());
+    checkpoint_resp.set_term(get_checkpoint_resp.checkpoint().op_id().term());
+    checkpoint_resp.set_write_id(-1);
+    checkpoint_resp.set_snapshot_time(get_checkpoint_resp.snapshot_time());
+    checkpoint_resp.set_key(get_checkpoint_resp.snapshot_key());
+
+    return checkpoint_resp;
   }
 
   Result<GetTabletListToPollForCDCResponsePB> CDCSDKYsqlTest::GetTabletListToPollForCDC(

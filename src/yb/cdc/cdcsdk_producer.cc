@@ -12,7 +12,6 @@
 
 #include "yb/cdc/cdc_producer.h"
 
-#include "yb/cdc/cdc_service.h"
 #include "yb/cdc/xrepl_stream_metadata.h"
 
 #include "yb/client/client.h"
@@ -2029,17 +2028,11 @@ Status HandleGetChangesForSnapshotRequest(
     client::YBClient* client, GetChangesResponsePB* resp, SchemaDetailsMap* cached_schema_details,
     const TableId& colocated_table_id, const tablet::TabletPtr& tablet_ptr, string* table_name,
     CDCSDKCheckpointPB* checkpoint, bool* checkpoint_updated, HybridTime* safe_hybrid_time_resp) {
-  // auto txn_participant = tablet_ptr->transaction_participant();
+  auto txn_participant = tablet_ptr->transaction_participant();
   ReadHybridTime time;
 
   // It is first call in snapshot then take snapshot.
   if ((from_op_id.key().empty()) && (from_op_id.snapshot_time() == 0)) {
-
-    auto term = consistent_snapshot_details.term();
-    auto index = consistent_snapshot_details.index();
-    auto snapshot_time = consistent_snapshot_details.snapshot_time();
-    
-    /*
     tablet::RemoveIntentsData data;
     RETURN_NOT_OK(tablet_peer->GetLastReplicatedData(&data));
 
@@ -2074,10 +2067,6 @@ Status HandleGetChangesForSnapshotRequest(
       SetCheckpoint(
           data.op_id.term, data.op_id.index, -1, "", time.read.ToUint64(), checkpoint, nullptr);
     }
-    */
-    
-    *safe_hybrid_time_resp = HybridTime::FromPB(snapshot_time);
-    SetCheckpoint(term, index, -1, "", snapshot_time, checkpoint, nullptr);
 
     *checkpoint_updated = true;
   } else {

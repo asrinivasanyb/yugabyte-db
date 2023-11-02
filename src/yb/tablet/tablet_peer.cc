@@ -1215,6 +1215,38 @@ Result<NamespaceId> TabletPeer::GetNamespaceId() {
   return namespace_id;
 }
 
+Status TabletPeer::SetAllCDCSDKRetentionBarriers(
+    const OpId& cdc_sdk_op_id, const MonoDelta& cdc_sdk_op_id_expiration,
+    const HybridTime& cdc_sdk_history_cutoff,
+    const bool require_history_cutoff) {
+
+  // WAL retention has 2 other aspects
+  //  1. cdc_min_replicated_index : indicates if a WAL segment is being used by CDC 
+  //                                and thus impacts GC of the WAL segments
+  //  2. cdc_consumer_opid : Impacts eviction of messages from log cache
+  RETURN_NOT_OK(set_cdc_min_replicated_index(cdc_sdk_op_id.index));
+  VERIFY_RESULT(GetConsensus())->UpdateCDCConsumerOpId(cdc_sdk_op_id);
+
+  // Intents Retention
+  //  1. set_cdc_sdk_min_checkpoint_op_id - opid beyond which GC will not happen
+  //  2. cdc_sdk_op_id_expiration - time limit upto which intents barrier setting holds
+  RETURN_NOT_OK(set_cdc_sdk_min_checkpoint_op_id(cdc_sdk_op_id));
+  {
+    std::lock_guard lock(lock_);
+    RETURN_NOT_OK(CheckRunning());
+    auto txn_participant = tablet_->transaction_participant();
+    if (txn_participant) {
+      txn_participant->SetIntentRetainOpIdAndTime(cdc_sdk_op_id, cdc_sdk_op_id_expiration);
+    }
+  }
+
+  // History Retention
+  if (require_history_cutoff)
+    RETURN_NOT_OK(set_cdc_sdk_safe_time(cdc_sdk_history_cutoff));
+
+  return Status::OK();
+}
+
 Status TabletPeer::SetCDCSDKRetainOpIdAndTime(
     const OpId& cdc_sdk_op_id, const MonoDelta& cdc_sdk_op_id_expiration,
     const HybridTime& cdc_sdk_safe_time) {

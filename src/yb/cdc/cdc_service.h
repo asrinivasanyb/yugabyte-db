@@ -250,9 +250,6 @@ class CDCServiceImpl : public CDCServiceIf {
       const ProducerTabletInfo& producer_tablet, const CDCRequestSource& request_source,
       const bool ignore_unpolled_tablets = true);
 
-  Result<CDCSDKCheckpointPB> GetLastCheckpointPB(
-      const ProducerTabletInfo& producer_tablet, const CDCRequestSource& request_source);
-
   Result<uint64_t> GetSafeTime(const xrepl::StreamId& stream_id, const TabletId& tablet_id);
 
   Result<CDCSDKCheckpointPB> GetConsistentSnapshotDetailsFromCdcState(

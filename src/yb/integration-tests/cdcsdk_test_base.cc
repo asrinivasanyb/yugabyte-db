@@ -402,9 +402,7 @@ Result<xrepl::StreamId> CDCSDKTestBase::CreateDBStream(
   InitCreateStreamRequest(&req, checkpoint_type, record_type);
 
   RETURN_NOT_OK(cdc_proxy_->CreateCDCStream(req, &resp, &rpc));
-  // Temporary - until sync version of createStream
-  SleepFor(MonoDelta::FromMilliseconds(1000));
-
+  
   return xrepl::StreamId::FromString(resp.db_stream_id());
 }
 

@@ -151,30 +151,26 @@ Status ChangeMetadataOperation::Apply(int64_t leader_term, Status* complete_stat
               << request()->cdc_sdk_stream_id();
 
     auto tablet_peer = tablet->tablet_peer();
-
-    // WAL retention has 2 other aspects
-    //  1. cdc_min_replicated_index : indicates if a WAL segment is being used by CDC 
-    //                                and thus impacts GC of the WAL segments
-    //  2. cdc_consumer_opid : Impacts eviction of messages from log cache
-    RETURN_NOT_OK(tablet_peer->set_cdc_min_replicated_index(op_id().index));
-    // VERIFY_RESULT(tablet_peer->GetConsensus());
-      
+  
     // Intent Retention and History Retention
     auto intent_retention_duration = 
       MonoDelta::FromMilliseconds(request()->cdc_intent_retention_ms());
     LOG(INFO) << " Blocking Intents GC from (" 
                << op_id().term << "," << op_id().index << ")"
-               << " for a duration of " << intent_retention_duration.ToSeconds() << " seconds";
+               << " for a duration of " << intent_retention_duration.ToSeconds() << " seconds"
+               << " for " << tablet->LogPrefix();
 
-    if (request()->has_cdc_require_history_cutoff() && request()->cdc_require_history_cutoff()) {
+    auto require_history_cutoff = 
+      request()->has_cdc_require_history_cutoff() && request()->cdc_require_history_cutoff();
+
+    if (require_history_cutoff) {
       // History retention barrier also needs to be set
-      LOG(INFO) << "History retention barrier set at " << hybrid_time().ToUint64();
-      RETURN_NOT_OK(tablet_peer->SetCDCSDKRetainOpIdAndTime(op_id(), intent_retention_duration,
-                                                            hybrid_time()));
-    } else {
-      // Only set Intent retention barrier, no history retention barrier is to be set
-      RETURN_NOT_OK(tablet_peer->SetCDCSDKRetainOpIdAndTime(op_id(), intent_retention_duration));
+      LOG(INFO) << "History retention barrier to be set at " << hybrid_time().ToUint64()
+                << " for " << tablet->LogPrefix();
     }
+    RETURN_NOT_OK(tablet_peer->SetAllCDCSDKRetentionBarriers(op_id(), intent_retention_duration,
+                                                             hybrid_time(), 
+                                                             require_history_cutoff));
   }
 
   // Only perform one operation.

@@ -951,27 +951,44 @@ void TabletServiceAdminImpl::AlterSchema(const tablet::ChangeMetadataRequestPB* 
   auto request = operation->AllocateRequest();
   request->CopyFrom(*req);
 
-  if (req->has_wal_retention_secs()) {
+  // CDC SDK Create Stream Context
+  if (req->has_cdc_sdk_stream_id()) {
     tablet::RemoveIntentsData data;
-    auto status_opid = tablet.peer->GetLastReplicatedData(&data);
-
-    if (status_opid.ok()) {
-      LOG(INFO) << "Opid before the change_metadata operation is submitted : term " << data.op_id.term << "index  " << data.op_id.index
-              << "time " << data.log_ht.ToUint64();
+    auto s1 = tablet.peer->GetLastReplicatedData(&data);
+    if (s1.ok()) {
+      LOG(INFO) << "Opid before the change_metadata operation is submitted : "
+                <<  " term " << data.op_id.term << " ,index  " << data.op_id.index
+                << " ,time " << data.log_ht.ToUint64();
       resp->mutable_snapshot_safe_op_id()->set_term(data.op_id.term);
       resp->mutable_snapshot_safe_op_id()->set_index(data.op_id.index);
     } else {
-      LOG(INFO) << " Could not get opid before change_metadata op";
+      LOG(WARNING) << " Could not get opid before change_metadata op";
     }
-    /*
-    // Get the current time and propose that as lower bound of snapshot_time to the followers
-    tablet_peer->setCDCSDKHistoryRetention(server_->Clock()->Now().ToUint64());
-    // At this point, it is guaranteed that a history cutoff time cannot be greater than the time just set above
-    // Now, propose a lower bound of the snapshot time to the followers. 
-    request->set_snapshot_time_lower_bound(server_->Clock()->Now().ToUint64());        
-    // During the "APPLY" of the "ChangeMetadata" operation, the followers will also prevent
-    // history cutoff beyond the snapshot_time_lower_bound suggested by the follower.
-    */
+    
+    // If there was an error in either determing the snapshot_safe_opid respond with an error
+    if (!s1.ok()) {
+      SetupErrorAndRespond(
+            resp->mutable_error(),
+            s1,
+            &context);
+        return;
+    }
+
+    // Get the current time and set that as history cutoff
+    // Now, from this point on, till the Followers Apply the ChangeMetadataOperation,
+    // any proposed history cutoff can only be less than Now()
+    if (req->has_cdc_require_history_cutoff() && req->cdc_require_history_cutoff()) {
+      auto s2 = tablet.peer->set_cdc_sdk_safe_time(server_->Clock()->Now());
+
+      // If there was an error while setting the history cutoff, respond with an error
+      if (!s2.ok()) {
+       SetupErrorAndRespond(
+            resp->mutable_error(),
+            s2,
+            &context);
+        return;
+      }
+    }
   }
 
   operation->set_completion_callback(

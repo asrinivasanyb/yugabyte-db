@@ -31,8 +31,7 @@ TEST_F(CDCSDKYsqlTest, YB_DISABLE_TEST_IN_TSAN(InsertBeforeAfterSnapshot)) {
   // This should be considered a change
   ASSERT_OK(WriteRows(2 /* start */, 3 /* end */, &test_cluster_));
 
-  auto set_resp = ASSERT_RESULT(SetCDCCheckpoint(stream_id, tablets, OpId::Min()));
-  ASSERT_FALSE(set_resp.has_error());
+  auto set_resp = ASSERT_RESULT(GetCDCSDKSnapshotCheckpoint(stream_id, tablets[0].tablet_id()));
 
   // The count array stores counts of DDL, INSERT, UPDATE, DELETE, READ, TRUNCATE in that order.
   const uint32_t expected_count[] = {1, 1, 0, 0, 1, 0};
@@ -41,9 +40,9 @@ TEST_F(CDCSDKYsqlTest, YB_DISABLE_TEST_IN_TSAN(InsertBeforeAfterSnapshot)) {
   ExpectedRecord expected_records_before_snapshot[] = {{0, 0}, {1, 2}};
   ExpectedRecord expected_records_after_snapshot[] = {{2, 3}};
 
-  GetChangesResponsePB change_resp = ASSERT_RESULT(GetChangesFromCDCSnapshot(stream_id, tablets));
+  // GetChangesResponsePB change_resp = ASSERT_RESULT(GetChangesFromCDCSnapshot(stream_id, tablets));
   GetChangesResponsePB change_resp_updated =
-      ASSERT_RESULT(UpdateCheckpoint(stream_id, tablets, &change_resp));
+      ASSERT_RESULT(UpdateCheckpoint(stream_id, tablets, set_resp));
 
   uint32_t expected_record_count = 0;
   for (const auto& record : change_resp_updated.cdc_sdk_proto_records()) {
