@@ -122,9 +122,15 @@ DEFINE_test_flag(
     bool, allow_ycql_transactional_xcluster, false,
     "Determines if xCluster transactional replication on YCQL tables is allowed.");
 
+DEFINE_test_flag(
+    bool, yb_enable_cdc_consistent_snapshot_streams, false,
+    "Enable support for CDC Consistent Snapshot Streams");
+
 DECLARE_bool(xcluster_wait_on_ddl_alter);
 DECLARE_int32(master_rpc_timeout_ms);
 DECLARE_bool(ysql_yb_enable_replication_commands);
+
+DECLARE_int64(cdc_intent_retention_ms);
 
 #define RETURN_ACTION_NOT_OK(expr, action) \
   RETURN_NOT_OK_PREPEND((expr), Format("An error occurred while $0", action))
@@ -759,11 +765,11 @@ Status CatalogManager::CreateCDCStream(
         // namespace level CDCSDK stream. This should not be needed after we tackle #18890.
         RETURN_NOT_OK(CreateNewXReplStream(
             *req, CreateNewCDCStreamMode::kNamespaceId, /*table_ids=*/{},
-            /*namespace_id=*/req->table_id(), resp, epoch));
+            /*namespace_id=*/req->table_id(), resp, epoch, rpc));
       } else {
         RETURN_NOT_OK(CreateNewXReplStream(
             *req, CreateNewCDCStreamMode::kXClusterTableIds,
-            /*table_ids=*/{req->table_id()}, /*namespace_id=*/std::nullopt, resp, epoch));
+            /*table_ids=*/{req->table_id()}, /*namespace_id=*/std::nullopt, resp, epoch, rpc));
       }
     } else {
       // Update and add table_id.
@@ -816,18 +822,18 @@ Status CatalogManager::CreateNewCDCStreamForNamespace(
   VLOG_WITH_FUNC(1) << Format("Creating CDCSDK stream for $0 tables", table_ids.size());
 
   for (const auto& table_id : table_ids) {
-    RETURN_NOT_OK(SetWalRetentionForTable(table_id, rpc, epoch));
     RETURN_NOT_OK(BackfillMetadataForCDC(table_id, rpc, epoch));
   }
 
   return CreateNewXReplStream(
-      req, CreateNewCDCStreamMode::kCdcsdkNamespaceAndTableIds, table_ids, ns->id(), resp, epoch);
+      req, CreateNewCDCStreamMode::kCdcsdkNamespaceAndTableIds, table_ids, ns->id(),
+      resp, epoch, rpc);
 }
 
 Status CatalogManager::CreateNewXReplStream(
     const CreateCDCStreamRequestPB& req, CreateNewCDCStreamMode mode,
     const std::vector<TableId>& table_ids, const std::optional<const NamespaceId>& namespace_id,
-    CreateCDCStreamResponsePB* resp, const LeaderEpoch& epoch) {
+    CreateCDCStreamResponsePB* resp, const LeaderEpoch& epoch, rpc::RpcContext* rpc) {
   VLOG_WITH_FUNC(1) << "Mode: " << IntegralToString(mode)
                     << ", table_ids: " << yb::ToString(table_ids)
                     << ", namespace_id: " << yb::ToString(namespace_id);
@@ -860,7 +866,7 @@ Status CatalogManager::CreateNewXReplStream(
 
     // Construct the CDC stream if the producer wasn't bootstrapped.
     auto stream_id =
-        VERIFY_RESULT(xrepl::StreamId::FromString(GenerateIdUnlocked(SysRowEntryType::CDC_STREAM)));
+      VERIFY_RESULT(xrepl::StreamId::FromString(GenerateIdUnlocked(SysRowEntryType::CDC_STREAM)));
 
     stream = make_scoped_refptr<CDCStreamInfo>(stream_id);
     stream->mutable_metadata()->StartMutation();
@@ -921,6 +927,11 @@ Status CatalogManager::CreateNewXReplStream(
       epoch));
   TRACE("Created CDC state table");
 
+  // TEMPORARY: The creation of this table sometimes interferes with the write into
+  // the table from the AsyncAlterTable callback
+  // Just wait for this table creation to finish
+  SleepFor(MonoDelta::FromMilliseconds(100));
+
   // Skip if disable_cdc_state_insert_on_setup is set.
   // If this is a bootstrap (initial state not ACTIVE), let the BootstrapProducer logic take care of
   // populating entries in cdc_state.
@@ -930,15 +941,78 @@ Status CatalogManager::CreateNewXReplStream(
     return Status::OK();
   }
 
+  // For CDCSDK only
+  // At this point, perform all the ALTER TABLE operations to set all retention barriers
+  // This will be called synchronously. That is, once this function returns, we are sure
+  // that all of the ALTER TABLE operations have completed.
+
+  uint64 consistent_snapshot_time = 0;
+  bool has_consistent_snapshot_option = false;
+  bool consistent_snapshot_option_use = false;
+  bool record_type_option_all = false;
+  if (mode == CreateNewCDCStreamMode::kCdcsdkNamespaceAndTableIds) {
+
+    for (auto option : req.options()) {
+      if (option.key() == cdc::kConsistentSnapshotOption) {
+        has_consistent_snapshot_option = true;
+        consistent_snapshot_option_use =
+          option.value() == CDCSDKSnapshotOption_Name(cdc::CDCSDKSnapshotOption::USE_SNAPSHOT);
+      } else if (option.key() == cdc::kRecordType) {
+        record_type_option_all =
+          option.value() == CDCRecordType_Name(cdc::CDCRecordType::ALL);
+      }
+    }
+
+    has_consistent_snapshot_option =
+      has_consistent_snapshot_option && FLAGS_TEST_yb_enable_cdc_consistent_snapshot_streams;
+    if (has_consistent_snapshot_option) {
+      // TEMPORARY: The creation of the cdc_state table sometimes interferes with the write into
+      // the table from the AsyncAlterTable callback
+      // Just wait for the cdc_state table creation to finish
+      // TODO: Need to fix this as part of making createStream synchronous
+      SleepFor(MonoDelta::FromMilliseconds(100));
+    }
+
+    auto require_history_cutoff = consistent_snapshot_option_use || record_type_option_all;
+    Status s = SetAllRetentionBarriers(req, rpc, epoch, table_ids, stream->StreamId(),
+                                       has_consistent_snapshot_option,
+                                       require_history_cutoff);
+
+    // At this stage, establish the consistent snapshot time
+    // This time is the same across all involved tablets and is the
+    // mechanism through which consistency is established
+    if (has_consistent_snapshot_option) {
+      consistent_snapshot_time = Clock()->Now().ToUint64();
+      LOG(INFO) << "Consistent Snapshot Time = " << consistent_snapshot_time;
+
+      // Save the consistent_snapshot_time in the SysCDCStreamEntryPB catalog
+      stream->mutable_metadata()->StartMutation();
+      auto* metadata = &stream->mutable_metadata()->mutable_dirty()->pb;
+      metadata->set_snapshot_time(consistent_snapshot_time);
+      stream->mutable_metadata()->CommitMutation();
+      LOG(INFO) << "Updating stream metadata with snapshot time " << stream->ToString();
+    }
+  }
+
   std::vector<cdc::CDCStateTableEntry> entries;
   for (const auto& table_id : table_ids) {
     auto table = VERIFY_RESULT(FindTableById(table_id));
     for (const auto& tablet : table->GetTablets()) {
       cdc::CDCStateTableEntry entry(tablet->id(), stream->StreamId());
       if (mode == CreateNewCDCStreamMode::kCdcsdkNamespaceAndTableIds) {
-        entry.checkpoint = OpId().Invalid();
-        entry.active_time = 0;
-        entry.cdc_sdk_safe_time = 0;
+        if (has_consistent_snapshot_option) {
+          // For USE_SNAPSHOT option, leave entry in POST_SNAPSHOT_BOOTSTRAP state
+          // For NOEXPORT_SNAPSHOT option, leave entry in SNAPSHOT_DONE state
+          if (consistent_snapshot_option_use)
+            entry.snapshot_key = "";
+
+          entry.active_time = GetCurrentTimeMicros();
+          entry.cdc_sdk_safe_time = consistent_snapshot_time;
+        } else {
+          entry.checkpoint = OpId().Invalid();
+          entry.active_time = 0;
+          entry.cdc_sdk_safe_time = 0;
+        }
       } else {
         DCHECK(mode == CreateNewCDCStreamMode::kXClusterTableIds);
         entry.checkpoint = OpId().Min();
@@ -948,7 +1022,7 @@ Status CatalogManager::CreateNewXReplStream(
     }
   }
 
-  RETURN_NOT_OK(cdc_state_table_->InsertEntries(entries));
+  RETURN_NOT_OK(cdc_state_table_->UpsertEntries(entries));
   TRACE("Created CDC state entries");
   return Status::OK();
 }
@@ -996,8 +1070,52 @@ Status CatalogManager::AddTableIdToCDCStream(const CreateCDCStreamRequestPB& req
   return Status::OK();
 }
 
+Status CatalogManager::SetAllRetentionBarriers(
+  const CreateCDCStreamRequestPB& req, rpc::RpcContext* rpc, const LeaderEpoch& epoch,
+  const std::vector<TableId>& table_ids, const xrepl::StreamId& stream_id,
+  const bool has_consistent_snapshot_option, const bool require_history_cutoff) {
+  VLOG_WITH_FUNC(4) << "Setting All retention barriers for stream: " << stream_id;
+
+  for (const auto& table_id : table_ids) {
+    auto table = VERIFY_RESULT(FindTableById(table_id));
+    {
+      auto l = table->LockForRead();
+      if (l->started_deleting()) {
+        return STATUS(
+            NotFound, "Table does not exist", table_id,
+     MasterError(MasterErrorPB::OBJECT_NOT_FOUND));
+      }
+    }
+
+    AlterTableRequestPB alter_table_req;
+    alter_table_req.mutable_table()->set_table_id(table_id);
+    alter_table_req.set_wal_retention_secs(GetAtomicFlag(&FLAGS_cdc_wal_retention_time_secs));
+
+    if (has_consistent_snapshot_option) {
+      alter_table_req.set_cdc_sdk_stream_id(stream_id.ToString());
+      alter_table_req.set_cdc_intent_retention_ms(GetAtomicFlag(&FLAGS_cdc_intent_retention_ms));
+      alter_table_req.set_cdc_require_history_cutoff(require_history_cutoff);
+    }
+
+    AlterTableResponsePB alter_table_resp;
+    Status s = this->AlterTable(&alter_table_req, &alter_table_resp, rpc, epoch);
+    if (!s.ok()) {
+      return STATUS(
+          InternalError,
+          Format("Unable to set retention barries for table, error: $0", s.message()),
+          table_id, MasterError(MasterErrorPB::INTERNAL_ERROR));
+    }
+  }
+
+  // TEMPORARY: Just sleep a bit to allow ALTER TABLEs to finish.
+  // TODO: Make this function synchronous
+  SleepFor(MonoDelta::FromMilliseconds(100));
+
+  return Status::OK();
+}
+
 Status CatalogManager::SetWalRetentionForTable(
-    const TableId& table_id, rpc::RpcContext* rpc, const LeaderEpoch& epoch) {
+  const TableId& table_id, rpc::RpcContext* rpc, const LeaderEpoch& epoch) {
   VLOG_WITH_FUNC(4) << "Setting WAL retention for table: " << table_id;
 
   auto table = VERIFY_RESULT(FindTableById(table_id));
@@ -1013,6 +1131,7 @@ Status CatalogManager::SetWalRetentionForTable(
   AlterTableRequestPB alter_table_req;
   alter_table_req.mutable_table()->set_table_id(table_id);
   alter_table_req.set_wal_retention_secs(GetAtomicFlag(&FLAGS_cdc_wal_retention_time_secs));
+
   AlterTableResponsePB alter_table_resp;
   Status s = this->AlterTable(&alter_table_req, &alter_table_resp, rpc, epoch);
   if (!s.ok()) {
@@ -1021,6 +1140,38 @@ Status CatalogManager::SetWalRetentionForTable(
         Format("Unable to change the WAL retention time for table, error: $0", s.message()),
         table_id, MasterError(MasterErrorPB::INTERNAL_ERROR));
   }
+
+  return Status::OK();
+}
+
+Status CatalogManager::PopulateCDCStateTableWithSnapshotSafeOpIdDetails(
+    const yb::TabletId& tablet_id,
+    const std::string&  cdc_sdk_stream_id,
+    const yb::OpIdPB&   snapshot_safe_opid,
+    const yb::HybridTime& proposed_snapshot_time,
+    const bool require_history_cutoff) {
+
+  LOG_WITH_FUNC(INFO) << "Tablet id: " << tablet_id
+                      << ", Stream id:" << cdc_sdk_stream_id
+                      << ", snapshot safe opid: " << snapshot_safe_opid.term()
+                      << " and " << snapshot_safe_opid.index()
+                      << ", proposed snapshot time: " << proposed_snapshot_time.ToUint64()
+                      <<" , require history cutoff: " << require_history_cutoff;
+
+  SharedLock lock(mutex_);
+
+  xrepl::StreamId stream_id = VERIFY_RESULT(xrepl::StreamId::FromString(cdc_sdk_stream_id));
+
+  cdc::CDCStateTableEntry entry(tablet_id, stream_id);
+  entry.checkpoint = OpId::FromPB(snapshot_safe_opid);
+  entry.cdc_sdk_safe_time = proposed_snapshot_time.ToUint64();
+  if (require_history_cutoff)
+    entry.snapshot_key = "";
+
+  entry.active_time = GetCurrentTimeMicros();
+  entry.last_replication_time = proposed_snapshot_time.GetPhysicalValueMicros();
+
+  RETURN_NOT_OK(cdc_state_table_->InsertEntries({entry}));
 
   return Status::OK();
 }
@@ -1836,7 +1987,6 @@ Status CatalogManager::ListCDCStreams(
   }
 
   SharedLock lock(mutex_);
-
   for (const CDCStreamInfoMap::value_type& entry : cdc_stream_map_) {
     bool skip_stream = false;
     bool id_type_option_present = false;

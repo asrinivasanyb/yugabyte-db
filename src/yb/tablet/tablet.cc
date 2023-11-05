@@ -2101,6 +2101,60 @@ Result<std::unique_ptr<docdb::YQLRowwiseIteratorIf>> Tablet::CreateCDCSnapshotIt
   return std::move(iter);
 }
 
+Status Tablet::set_cdc_min_replicated_index(int64_t cdc_min_replicated_index) {
+  // std::lock_guard l(cdc_min_replicated_index_lock_);
+  VLOG(1) << "Setting cdc min replicated index to " << cdc_min_replicated_index;
+  RETURN_NOT_OK(metadata_->set_cdc_min_replicated_index(cdc_min_replicated_index));
+  return Status::OK();
+}
+
+Status Tablet::set_cdc_sdk_min_checkpoint_op_id(const OpId& cdc_sdk_min_checkpoint_op_id) {
+  // std::lock_guard l(cdc_min_replicated_index_lock_);
+  VLOG(1) << "Setting CDCSDK min checkpoint opId to " << cdc_sdk_min_checkpoint_op_id.ToString();
+  RETURN_NOT_OK(metadata_->set_cdc_sdk_min_checkpoint_op_id(cdc_sdk_min_checkpoint_op_id));
+  return Status::OK();
+}
+
+Status Tablet::set_cdc_sdk_safe_time(const HybridTime& cdc_sdk_safe_time) {
+  // std::lock_guard l(cdc_min_replicated_index_lock_);
+  VLOG(1) << "Setting CDCSDK safe time to " << cdc_sdk_safe_time;
+  RETURN_NOT_OK(metadata_->set_cdc_sdk_safe_time(cdc_sdk_safe_time));
+  return Status::OK();
+}
+
+Status Tablet::SetAllCDCSDKRetentionBarriers(
+    const OpId& cdc_sdk_op_id, const MonoDelta& cdc_sdk_op_id_expiration,
+    const HybridTime& cdc_sdk_history_cutoff,
+    const bool require_history_cutoff) {
+
+  // Serialize all retention barrier settings
+  std::lock_guard l(cdc_min_replicated_index_lock_);
+
+  // WAL retention has 2 other aspects
+  //  1. cdc_min_replicated_index : indicates if a WAL segment is being used by CDC
+  //                                and thus impacts GC of the WAL segments
+  //  2. cdc_consumer_opid : Impacts eviction of messages from log cache
+  RETURN_NOT_OK(set_cdc_min_replicated_index(cdc_sdk_op_id.index));
+  // VERIFY_RESULT(GetConsensus())->UpdateCDCConsumerOpId(cdc_sdk_op_id);
+
+  // Intents Retention
+  //  1. set_cdc_sdk_min_checkpoint_op_id - opid beyond which GC will not happen
+  //  2. cdc_sdk_op_id_expiration - time limit upto which intents barrier setting holds
+  RETURN_NOT_OK(set_cdc_sdk_min_checkpoint_op_id(cdc_sdk_op_id));
+  {
+    auto txn_participant = transaction_participant();
+    if (txn_participant) {
+      txn_participant->SetIntentRetainOpIdAndTime(cdc_sdk_op_id, cdc_sdk_op_id_expiration);
+    }
+  }
+
+  // History Retention
+  if (require_history_cutoff)
+    RETURN_NOT_OK(set_cdc_sdk_safe_time(cdc_sdk_history_cutoff));
+
+  return Status::OK();
+}
+
 Status Tablet::CreatePreparedChangeMetadata(
     ChangeMetadataOperation *operation, const Schema* schema, IsLeaderSide is_leader_side) {
   if (schema) {

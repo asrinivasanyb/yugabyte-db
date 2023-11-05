@@ -128,6 +128,7 @@ DECLARE_uint64(cdc_stream_records_threshold_size_bytes);
 DECLARE_int64(cdc_resolve_intent_lag_threshold_ms);
 DECLARE_bool(enable_tablet_split_of_cdcsdk_streamed_tables);
 DECLARE_bool(ysql_yb_enable_replication_commands);
+DECLARE_bool(TEST_yb_enable_cdc_consistent_snapshot_streams);
 
 namespace yb {
 

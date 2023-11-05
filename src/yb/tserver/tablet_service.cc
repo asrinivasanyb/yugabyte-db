@@ -948,7 +948,47 @@ void TabletServiceAdminImpl::AlterSchema(const tablet::ChangeMetadataRequestPB* 
   }
   auto operation = std::make_unique<ChangeMetadataOperation>(
       tablet.tablet, tablet.peer->log());
-  operation->AllocateRequest()->CopyFrom(*req);
+  auto request = operation->AllocateRequest();
+  request->CopyFrom(*req);
+
+  // CDC SDK Create Stream Context
+  if (req->has_cdc_sdk_stream_id()) {
+    tablet::RemoveIntentsData data;
+    auto s1 = tablet.peer->GetLastReplicatedData(&data);
+    if (s1.ok()) {
+      LOG_WITH_PREFIX(INFO) << "Opid before the change_metadata operation is submitted : "
+                            <<  " term " << data.op_id.term << " ,index  " << data.op_id.index
+                            << " ,time " << data.log_ht.ToUint64();
+      resp->mutable_snapshot_safe_op_id()->set_term(data.op_id.term);
+      resp->mutable_snapshot_safe_op_id()->set_index(data.op_id.index);
+    } else {
+      LOG_WITH_PREFIX(WARNING) << "CDCSDK Create Stream context: "
+                               << "Could not get snapshot_safe_opid";
+      SetupErrorAndRespond(
+            resp->mutable_error(),
+            s1,
+            &context);
+      return;
+    }
+
+    // Get the current time and set that as history cutoff
+    // Now, from this point on, till the Followers Apply the ChangeMetadataOperation,
+    // any proposed history cutoff they process can only be less than Now()
+    if (req->has_cdc_require_history_cutoff() && req->cdc_require_history_cutoff()) {
+      auto s2 = tablet.peer->set_cdc_sdk_safe_time(server_->Clock()->Now());
+
+      // If there was an error while setting the history cutoff, respond with an error
+      if (!s2.ok()) {
+       LOG_WITH_PREFIX(WARNING) << "CDCSDK Create Stream context: "
+                                << "Unable to set history cutoff";
+       SetupErrorAndRespond(
+            resp->mutable_error(),
+            s2,
+            &context);
+       return;
+      }
+    }
+  }
 
   operation->set_completion_callback(
       MakeRpcOperationCompletionCallback(std::move(context), resp, server_->Clock()));

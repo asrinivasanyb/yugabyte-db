@@ -428,5 +428,25 @@ Result<xrepl::StreamId> CDCSDKTestBase::CreateDBStreamWithReplicationSlot(
   return xrepl::StreamId::FromString(stream_id);
 }
 
+// This creates a Consistent Snapshot stream on the database kNamespaceName by default.
+Result<xrepl::StreamId> CDCSDKTestBase::CreateCSStream(
+    CDCSDKSnapshotOption snapshot_option,
+    CDCCheckpointType checkpoint_type,
+    CDCRecordType record_type) {
+  CreateCDCStreamRequestPB req;
+  CreateCDCStreamResponsePB resp;
+
+  rpc::RpcController rpc;
+  rpc.set_timeout(MonoDelta::FromMilliseconds(FLAGS_cdc_write_rpc_timeout_ms));
+
+  InitCreateStreamRequest(&req, checkpoint_type, record_type);
+  req.set_consistent_snapshot_option(snapshot_option);
+
+  RETURN_NOT_OK(cdc_proxy_->CreateCDCStream(req, &resp, &rpc));
+
+  return xrepl::StreamId::FromString(resp.db_stream_id());
+}
+
+
 }  // namespace cdc
 }  // namespace yb

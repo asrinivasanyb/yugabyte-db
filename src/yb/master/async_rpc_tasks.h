@@ -560,6 +560,17 @@ class AsyncAlterTable : public AsyncTabletLeaderTask {
     : AsyncTabletLeaderTask(master, callback_pool, tablet, table, std::move(epoch)),
         transaction_id_(transaction_id) {}
 
+  AsyncAlterTable(
+      Master* master, ThreadPool* callback_pool, const scoped_refptr<TabletInfo>& tablet,
+      const scoped_refptr<TableInfo>& table, const TransactionId transaction_id, LeaderEpoch epoch,
+      const std::string& cdc_sdk_stream_id, const uint64 cdc_intent_retention_ms,
+      const bool cdc_require_history_cutoff)
+      : AsyncTabletLeaderTask(master, callback_pool, tablet, std::move(epoch)),
+          transaction_id_(transaction_id),
+          cdc_sdk_stream_id_(cdc_sdk_stream_id),
+          cdc_intent_retention_ms_(cdc_intent_retention_ms),
+          cdc_require_history_cutoff_(cdc_require_history_cutoff) {}
+
   server::MonitoredTaskType type() const override {
     return server::MonitoredTaskType::kAlterTable;
   }
@@ -577,6 +588,9 @@ class AsyncAlterTable : public AsyncTabletLeaderTask {
   bool SendRequest(int attempt) override;
 
   TransactionId transaction_id_ = TransactionId::Nil();
+  const std::string cdc_sdk_stream_id_ = "";
+  const uint64 cdc_intent_retention_ms_ = 0;
+  const bool cdc_require_history_cutoff_ = false;
 };
 
 class AsyncBackfillDone : public AsyncAlterTable {

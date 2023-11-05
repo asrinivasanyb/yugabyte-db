@@ -298,6 +298,13 @@ class CatalogManagerIf {
 
   virtual Status PromoteTableToRunningState(TableInfoPtr table_info, const LeaderEpoch& epoch) = 0;
 
+  virtual Status PopulateCDCStateTableWithSnapshotSafeOpIdDetails(
+      const yb::TabletId& tablet_id,
+      const std::string& cdc_sdk_stream_id,
+      const yb::OpIdPB& safe_opid,
+      const yb::HybridTime& proposed_snapshot_time,
+      const bool require_history_cutoff) = 0;
+
   virtual ~CatalogManagerIf() = default;
 };
 

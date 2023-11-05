@@ -195,6 +195,11 @@ class CDCSDKTestBase : public YBTest {
   Result<xrepl::StreamId> CreateDBStreamWithReplicationSlot(
       const std::string& replication_slot_name);
 
+  Result<xrepl::StreamId> CreateCSStream(
+    CDCSDKSnapshotOption snapshot_option = CDCSDKSnapshotOption::USE_SNAPSHOT,
+    CDCCheckpointType checkpoint_type = CDCCheckpointType::EXPLICIT,
+    CDCRecordType record_type = CDCRecordType::CHANGE);
+
  protected:
   // Every test needs to initialize this cdc_proxy_.
   std::unique_ptr<CDCServiceProxy> cdc_proxy_;

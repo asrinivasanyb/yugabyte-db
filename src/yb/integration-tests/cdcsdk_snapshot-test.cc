@@ -1157,5 +1157,75 @@ TEST_F(CDCSDKYsqlTest, YB_DISABLE_TEST_IN_TSAN(TestSnapshotRecordSnapshotKey)) {
   ASSERT_EQ(count, 1000);
 }
 
+TEST_F(CDCSDKYsqlTest, YB_DISABLE_TEST_IN_TSAN(TestCSStreamSnapshotEstablishment)) {
+  FLAGS_TEST_yb_enable_cdc_consistent_snapshot_streams = true;
+  ASSERT_OK(SetUpWithParams(1, 1, false));
+  auto table = ASSERT_RESULT(CreateTable(&test_cluster_, kNamespaceName, kTableName));
+  google::protobuf::RepeatedPtrField<master::TabletLocationsPB> tablets;
+  ASSERT_OK(test_client()->GetTablets(table, 0, &tablets, nullptr));
+  ASSERT_EQ(tablets.size(), 1);
+
+  tablet::TabletPeerPtr tablet_peer;
+  for (size_t i = 0; i < test_cluster()->num_tablet_servers(); ++i) {
+    for (const auto& tp : test_cluster()->GetTabletPeers(i)) {
+     if (tp->tablet_id() == tablets.begin()->tablet_id())
+        tablet_peer = tp;
+    }
+  }
+  ASSERT_TRUE(tablet_peer->tablet_id() == tablets.begin()->tablet_id());
+
+  // Create a Consistent Snapshot Stream with NOEXPORT_SNAPSHOT option
+  xrepl::StreamId stream1_id =
+        ASSERT_RESULT(CreateCSStream(CDCSDKSnapshotOption::NOEXPORT_SNAPSHOT));
+  ASSERT_NOK(GetSnapshotDetailsFromCdcStateTable(
+        stream1_id, tablets.begin()->tablet_id(), test_client()));
+  auto checkpoint_result =
+        ASSERT_RESULT(GetCDCSnapshotCheckpoint(stream1_id, tablets[0].tablet_id()));
+
+  // Check for the following
+  // 1. snapshot_key must be null
+  // 2. Checkpoint should be X.Y where X, Y > 0
+  // 3. History cutoff time should be HybridTime::kInvalid
+  // 4. Checkpoint index Y (in X.Y) < cdc_min_replicated_index
+  LOG(INFO) << "Snapshot Safe Opid: "
+            << "(" << checkpoint_result.checkpoint().op_id().term() << ","
+            << checkpoint_result.checkpoint().op_id().index() << ")";
+  LOG(INFO) << "Snapshot Time : " << checkpoint_result.snapshot_time();
+  LOG(INFO) << "History cutoff: " << tablet_peer->get_cdc_sdk_safe_time().ToUint64();
+  LOG(INFO)<< "WAL/Intents index protected from: " << tablet_peer->get_cdc_min_replicated_index();
+  ASSERT_GT(checkpoint_result.checkpoint().op_id().term(), 0);
+  ASSERT_GT(checkpoint_result.checkpoint().op_id().index(), 0);
+  ASSERT_EQ(tablet_peer->get_cdc_sdk_safe_time(), HybridTime::kInvalid);
+  ASSERT_LT(checkpoint_result.checkpoint().op_id().index(),
+              tablet_peer->get_cdc_min_replicated_index());
+
+  // Create a Consistent Snapshot Stream with USE_SNAPSHOT option
+  xrepl::StreamId stream2_id = ASSERT_RESULT(CreateCSStream());
+  const auto& snapshot_time_key_pair = ASSERT_RESULT(GetSnapshotDetailsFromCdcStateTable(
+        stream2_id, tablets.begin()->tablet_id(), test_client()));
+  checkpoint_result =
+        ASSERT_RESULT(GetCDCSnapshotCheckpoint(stream2_id, tablets[0].tablet_id()));
+
+  // Check for the following
+  // 1. snapshot_key must be null
+  // 2. Checkpoint should be X.Y where X, Y > 0
+  // 3. snapshot_time > history cut off time
+  // 4. Checkpoint index Y (in X.Y) < cdc_min_replicated_index
+  LOG(INFO) << "Snapshot Safe Opid: "
+            << "(" << checkpoint_result.checkpoint().op_id().term() << ","
+            << checkpoint_result.checkpoint().op_id().index() << ")";
+  LOG(INFO) << "Snapshot Time : " << std::get<0>(snapshot_time_key_pair);
+  LOG(INFO) << "History cutoff: " << tablet_peer->get_cdc_sdk_safe_time().ToUint64();
+  LOG(INFO)<< "WAL/Intents index protected from: " << tablet_peer->get_cdc_min_replicated_index();
+  ASSERT_GT(checkpoint_result.checkpoint().op_id().term(), 0);
+  ASSERT_GT(checkpoint_result.checkpoint().op_id().index(), 0);
+  ASSERT_GT(std::get<0>(snapshot_time_key_pair),
+              tablet_peer->get_cdc_sdk_safe_time().ToUint64());
+  ASSERT_LT(checkpoint_result.checkpoint().op_id().index(),
+              tablet_peer->get_cdc_min_replicated_index());
+
+}
+
+
 }  // namespace cdc
 }  // namespace yb

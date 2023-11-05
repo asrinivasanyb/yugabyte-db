@@ -735,9 +735,25 @@ class Tablet : public AbstractTablet,
     return snapshot_coordinator_;
   }
 
+//------------------------------------------------------------------------------------------------
+// CDC Related
+
   docdb::YQLRowwiseIteratorIf* cdc_iterator() {
     return cdc_iterator_;
   }
+
+  Status set_cdc_min_replicated_index(int64_t cdc_min_replicated_index);
+
+  Status set_cdc_sdk_min_checkpoint_op_id(const OpId& cdc_sdk_min_checkpoint_op_id);
+
+  Status set_cdc_sdk_safe_time(const HybridTime& cdc_sdk_safe_time = HybridTime::kInvalid);
+
+  Status SetAllCDCSDKRetentionBarriers(
+      const OpId& cdc_sdk_op_id, const MonoDelta& cdc_sdk_op_id_expiration,
+      const HybridTime& cdc_sdk_history_cutoff,
+      const bool require_history_cutoff);
+
+//------------------------------------------------------------------------------------------------
 
   // Allows us to add tablet-specific information that will get deref'd when the tablet does.
   void AddAdditionalMetadata(const std::string& key, std::shared_ptr<void> additional_metadata) {
@@ -934,6 +950,10 @@ class Tablet : public AbstractTablet,
 
   // Lock used to serialize the creation of RocksDB checkpoints.
   mutable std::mutex create_checkpoint_lock_;
+
+  // Serializes access to set_cdc_min_replicated_index and reset_cdc_min_replicated_index_if_stale
+  // and protects cdc_min_replicated_index_refresh_time_ for reads and writes.
+  mutable simple_spinlock cdc_min_replicated_index_lock_;
 
  private:
   friend class Iterator;

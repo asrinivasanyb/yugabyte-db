@@ -42,6 +42,7 @@
 #include "yb/tablet/tablet.h"
 #include "yb/tablet/tablet_metadata.h"
 #include "yb/tablet/tablet_peer.h"
+#include "yb/tablet/transaction_participant.h"
 
 #include "yb/tserver/tserver_error.h"
 
@@ -132,6 +133,37 @@ Status ChangeMetadataOperation::Apply(int64_t leader_term, Status* complete_stat
   log::Log* log = mutable_log();
   size_t num_operations = 0;
 
+  // CDCSDK Create Stream Context
+  // Set WAL/Intents/History Retention Barriers
+  if (request()->has_cdc_sdk_stream_id()) {
+    LOG(INFO) << " Setting all retention barriers for stream "
+              << request()->cdc_sdk_stream_id();
+
+    // WAL Retention
+    LOG(INFO) << "Setting WAL cdc_min_replicated_index to " << op_id().index
+              << " for " << tablet->LogPrefix();
+    log->set_cdc_min_replicated_index(op_id().index);
+
+    // Intent Retention and History Retention
+    auto intent_retention_duration =
+      MonoDelta::FromMilliseconds(request()->cdc_intent_retention_ms());
+    LOG(INFO) << " Blocking Intents GC from ("
+               << op_id().term << "," << op_id().index << ")"
+               << " for a duration of " << intent_retention_duration.ToSeconds() << " seconds"
+               << " for " << tablet->LogPrefix();
+
+    auto require_history_cutoff =
+      request()->has_cdc_require_history_cutoff() && request()->cdc_require_history_cutoff();
+    if (require_history_cutoff) {
+      // History retention barrier also needs to be set
+      LOG(INFO) << "History retention barrier to be set at " << hybrid_time().ToUint64()
+                << " for " << tablet->LogPrefix();
+    }
+    RETURN_NOT_OK(tablet->SetAllCDCSDKRetentionBarriers(op_id(), intent_retention_duration,
+                                                        hybrid_time(),
+                                                        require_history_cutoff));
+  }
+
   if (request()->has_wal_retention_secs()) {
     // We don't consider wal retention changes as another operation because this value is always
     // sent together with the schema, as long as it has been changed in the master's sys-catalog.
@@ -142,6 +174,8 @@ Status ChangeMetadataOperation::Apply(int64_t leader_term, Status* complete_stat
       LOG(WARNING) << "T " << tablet->tablet_id() << " Unable to alter wal retention secs: " << s;
     }
   }
+
+
 
   // Only perform one operation.
   enum MetadataChange {

@@ -1114,7 +1114,10 @@ Status TabletPeer::set_cdc_min_replicated_index_unlocked(int64_t cdc_min_replica
 
 Status TabletPeer::set_cdc_min_replicated_index(int64_t cdc_min_replicated_index) {
   std::lock_guard l(cdc_min_replicated_index_lock_);
-  return set_cdc_min_replicated_index_unlocked(cdc_min_replicated_index);
+  auto tablet = VERIFY_RESULT(shared_tablet_safe());
+  RETURN_NOT_OK(tablet->set_cdc_min_replicated_index(cdc_min_replicated_index));
+  cdc_min_replicated_index_refresh_time_ = MonoTime::Now();
+  return Status::OK();
 }
 
 Status TabletPeer::reset_cdc_min_replicated_index_if_stale() {
@@ -1135,15 +1138,13 @@ int64_t TabletPeer::get_cdc_min_replicated_index() {
 }
 
 Status TabletPeer::set_cdc_sdk_min_checkpoint_op_id(const OpId& cdc_sdk_min_checkpoint_op_id) {
-  VLOG(1) << "Setting CDCSDK min checkpoint opId to " << cdc_sdk_min_checkpoint_op_id.ToString();
-  RETURN_NOT_OK(meta_->set_cdc_sdk_min_checkpoint_op_id(cdc_sdk_min_checkpoint_op_id));
-  return Status::OK();
+  auto tablet = VERIFY_RESULT(shared_tablet_safe());
+  return tablet->set_cdc_sdk_min_checkpoint_op_id(cdc_sdk_min_checkpoint_op_id);
 }
 
 Status TabletPeer::set_cdc_sdk_safe_time(const HybridTime& cdc_sdk_safe_time) {
-  VLOG(1) << "Setting CDCSDK safe time to " << cdc_sdk_safe_time;
-  RETURN_NOT_OK(meta_->set_cdc_sdk_safe_time(cdc_sdk_safe_time));
-  return Status::OK();
+  auto tablet = VERIFY_RESULT(shared_tablet_safe());
+  return tablet->set_cdc_sdk_safe_time(cdc_sdk_safe_time);
 }
 
 HybridTime TabletPeer::get_cdc_sdk_safe_time() {

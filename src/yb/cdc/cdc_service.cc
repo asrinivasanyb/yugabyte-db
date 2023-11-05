@@ -713,16 +713,22 @@ bool YsqlTableHasPrimaryKey(const client::YBSchema& schema) {
 std::unordered_map<std::string, std::string> GetCreateCDCStreamOptions(
     const CreateCDCStreamRequestPB* req) {
   std::unordered_map<std::string, std::string> options;
-  if (req->has_namespace_name()) {
-    options.reserve(5);
-  } else {
-    options.reserve(4);
-  }
+  auto nopts = 4;
+  if (req->has_namespace_name())
+    nopts++;
+  if (req->has_consistent_snapshot_option())
+    nopts++;
+
+  options.reserve(nopts);
 
   options.emplace(kRecordType, CDCRecordType_Name(req->record_type()));
   options.emplace(kRecordFormat, CDCRecordFormat_Name(req->record_format()));
   options.emplace(kSourceType, CDCRequestSource_Name(req->source_type()));
   options.emplace(kCheckpointType, CDCCheckpointType_Name(req->checkpoint_type()));
+  if (req->has_consistent_snapshot_option()) {
+    options.emplace(kConsistentSnapshotOption,
+                    CDCSDKSnapshotOption_Name(req->consistent_snapshot_option()));
+  }
   if (req->has_namespace_name()) {
     options.emplace(kIdType, kNamespaceId);
   }
