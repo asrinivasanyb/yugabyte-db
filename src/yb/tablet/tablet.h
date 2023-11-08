@@ -742,13 +742,7 @@ class Tablet : public AbstractTablet,
     return cdc_iterator_;
   }
 
-  Status set_cdc_min_replicated_index(int64_t cdc_min_replicated_index);
-
-  Status set_cdc_sdk_min_checkpoint_op_id(const OpId& cdc_sdk_min_checkpoint_op_id);
-
-  Status set_cdc_sdk_safe_time(const HybridTime& cdc_sdk_safe_time = HybridTime::kInvalid);
-
-  Status SetAllCDCSDKRetentionBarriers(
+  Status SetAllInitialCDCSDKRetentionBarriers(
       const OpId& cdc_sdk_op_id, const MonoDelta& cdc_sdk_op_id_expiration,
       const HybridTime& cdc_sdk_history_cutoff,
       const bool require_history_cutoff);

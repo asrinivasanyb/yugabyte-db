@@ -971,21 +971,25 @@ void TabletServiceAdminImpl::AlterSchema(const tablet::ChangeMetadataRequestPB* 
       return;
     }
 
-    // Get the current time and set that as history cutoff
+    // Check if there is a valid CDC History cutoff requirement.
+    // Else, get the current time and set that as history cutoff
     // Now, from this point on, till the Followers Apply the ChangeMetadataOperation,
     // any proposed history cutoff they process can only be less than Now()
     if (req->has_cdc_require_history_cutoff() && req->cdc_require_history_cutoff()) {
-      auto s2 = tablet.peer->set_cdc_sdk_safe_time(server_->Clock()->Now());
+      Status s2;
+      if (tablet.peer->get_cdc_sdk_safe_time() == HybridTime::kInvalid) {
+        s2 = tablet.peer->set_cdc_sdk_safe_time(server_->Clock()->Now());
 
-      // If there was an error while setting the history cutoff, respond with an error
-      if (!s2.ok()) {
-       LOG_WITH_PREFIX(WARNING) << "CDCSDK Create Stream context: "
-                                << "Unable to set history cutoff";
-       SetupErrorAndRespond(
-            resp->mutable_error(),
-            s2,
-            &context);
-       return;
+        // If there was an error while setting the history cutoff, respond with an error
+        if (!s2.ok()) {
+          LOG_WITH_PREFIX(WARNING) << "CDCSDK Create Stream context: "
+                                   << "Unable to set history cutoff";
+          SetupErrorAndRespond(
+          resp->mutable_error(),
+              s2,
+        &context);
+         return;
+        }
       }
     }
   }

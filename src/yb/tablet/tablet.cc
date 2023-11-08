@@ -2101,56 +2101,55 @@ Result<std::unique_ptr<docdb::YQLRowwiseIteratorIf>> Tablet::CreateCDCSnapshotIt
   return std::move(iter);
 }
 
-Status Tablet::set_cdc_min_replicated_index(int64_t cdc_min_replicated_index) {
-  // std::lock_guard l(cdc_min_replicated_index_lock_);
-  VLOG(1) << "Setting cdc min replicated index to " << cdc_min_replicated_index;
-  RETURN_NOT_OK(metadata_->set_cdc_min_replicated_index(cdc_min_replicated_index));
-  return Status::OK();
-}
-
-Status Tablet::set_cdc_sdk_min_checkpoint_op_id(const OpId& cdc_sdk_min_checkpoint_op_id) {
-  // std::lock_guard l(cdc_min_replicated_index_lock_);
-  VLOG(1) << "Setting CDCSDK min checkpoint opId to " << cdc_sdk_min_checkpoint_op_id.ToString();
-  RETURN_NOT_OK(metadata_->set_cdc_sdk_min_checkpoint_op_id(cdc_sdk_min_checkpoint_op_id));
-  return Status::OK();
-}
-
-Status Tablet::set_cdc_sdk_safe_time(const HybridTime& cdc_sdk_safe_time) {
-  // std::lock_guard l(cdc_min_replicated_index_lock_);
-  VLOG(1) << "Setting CDCSDK safe time to " << cdc_sdk_safe_time;
-  RETURN_NOT_OK(metadata_->set_cdc_sdk_safe_time(cdc_sdk_safe_time));
-  return Status::OK();
-}
-
-Status Tablet::SetAllCDCSDKRetentionBarriers(
+// This is called from 2 places
+// 1) From the TabletPeer during "normal operations"
+// 2) From ChangeMetadaOperation::Apply during Tablet Bootstrap,
+//    when the TabletPeer is not yet available
+//
+// The difference between this method here and the method with the same
+// name in TabletPeer is that the TabletPeer will also set the retention barrier
+// in the Consensus layer log cache as well as on the Log itself
+//
+// During bootstrap, the retention barrier on the consensus layer is not set
+// as that barrier information has not been persisted. This is alright since
+// that is only for the Log Cache's eviction policy. The Cache will reload
+// from the Log segments if there is a cache miss.
+//
+// Here, a stream is setting its initial retention barrier on the tablet.
+// It will be conservative. That is, it will reset the barrier only if
+// the curren barrier is ahead of its requirement. If there is already
+// another slower consumer with a stricter barrier requirement, that
+// will be left alone and the barrier will not be reset here.
+Status Tablet::SetAllInitialCDCSDKRetentionBarriers(
     const OpId& cdc_sdk_op_id, const MonoDelta& cdc_sdk_op_id_expiration,
     const HybridTime& cdc_sdk_history_cutoff,
     const bool require_history_cutoff) {
 
-  // Serialize all retention barrier settings
-  std::lock_guard l(cdc_min_replicated_index_lock_);
-
-  // WAL retention has 2 other aspects
+  // WAL retention
   //  1. cdc_min_replicated_index : indicates if a WAL segment is being used by CDC
   //                                and thus impacts GC of the WAL segments
-  //  2. cdc_consumer_opid : Impacts eviction of messages from log cache
-  RETURN_NOT_OK(set_cdc_min_replicated_index(cdc_sdk_op_id.index));
-  // VERIFY_RESULT(GetConsensus())->UpdateCDCConsumerOpId(cdc_sdk_op_id);
+  if (metadata_->cdc_min_replicated_index() > cdc_sdk_op_id.index)
+    RETURN_NOT_OK(metadata_->set_cdc_min_replicated_index(cdc_sdk_op_id.index));
 
   // Intents Retention
   //  1. set_cdc_sdk_min_checkpoint_op_id - opid beyond which GC will not happen
   //  2. cdc_sdk_op_id_expiration - time limit upto which intents barrier setting holds
-  RETURN_NOT_OK(set_cdc_sdk_min_checkpoint_op_id(cdc_sdk_op_id));
-  {
-    auto txn_participant = transaction_participant();
-    if (txn_participant) {
-      txn_participant->SetIntentRetainOpIdAndTime(cdc_sdk_op_id, cdc_sdk_op_id_expiration);
+  if (metadata_->cdc_sdk_min_checkpoint_op_id() == OpId::Invalid() ||
+      metadata_->cdc_sdk_min_checkpoint_op_id()> cdc_sdk_op_id) {
+    RETURN_NOT_OK(metadata_->set_cdc_sdk_min_checkpoint_op_id(cdc_sdk_op_id));
+    {
+      auto txn_participant = transaction_participant();
+      if (txn_participant) {
+        txn_participant->SetIntentRetainOpIdAndTime(cdc_sdk_op_id, cdc_sdk_op_id_expiration);
+      }
     }
   }
 
   // History Retention
-  if (require_history_cutoff)
-    RETURN_NOT_OK(set_cdc_sdk_safe_time(cdc_sdk_history_cutoff));
+  if (require_history_cutoff &&
+      (metadata_->cdc_sdk_safe_time() == HybridTime::kInvalid ||
+       metadata_->cdc_sdk_safe_time() > cdc_sdk_history_cutoff))
+    RETURN_NOT_OK(metadata_->set_cdc_sdk_safe_time(cdc_sdk_history_cutoff));
 
   return Status::OK();
 }

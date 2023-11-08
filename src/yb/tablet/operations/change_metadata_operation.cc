@@ -137,12 +137,14 @@ Status ChangeMetadataOperation::Apply(int64_t leader_term, Status* complete_stat
   // Set WAL/Intents/History Retention Barriers
   if (request()->has_cdc_sdk_stream_id()) {
     LOG(INFO) << " Setting all retention barriers for stream "
-              << request()->cdc_sdk_stream_id();
+              << request()->cdc_sdk_stream_id()
+              << " and " << tablet->LogPrefix();
 
     // WAL Retention
     LOG(INFO) << "Setting WAL cdc_min_replicated_index to " << op_id().index
               << " for " << tablet->LogPrefix();
-    log->set_cdc_min_replicated_index(op_id().index);
+    if (log->cdc_min_replicated_index() > op_id().index)
+      log->set_cdc_min_replicated_index(op_id().index);
 
     // Intent Retention and History Retention
     auto intent_retention_duration =
@@ -159,9 +161,10 @@ Status ChangeMetadataOperation::Apply(int64_t leader_term, Status* complete_stat
       LOG(INFO) << "History retention barrier to be set at " << hybrid_time().ToUint64()
                 << " for " << tablet->LogPrefix();
     }
-    RETURN_NOT_OK(tablet->SetAllCDCSDKRetentionBarriers(op_id(), intent_retention_duration,
-                                                        hybrid_time(),
-                                                        require_history_cutoff));
+
+    RETURN_NOT_OK(tablet->SetAllInitialCDCSDKRetentionBarriers(op_id(), intent_retention_duration,
+                                                               hybrid_time(),
+                                                               require_history_cutoff));
   }
 
   if (request()->has_wal_retention_secs()) {
@@ -174,8 +177,6 @@ Status ChangeMetadataOperation::Apply(int64_t leader_term, Status* complete_stat
       LOG(WARNING) << "T " << tablet->tablet_id() << " Unable to alter wal retention secs: " << s;
     }
   }
-
-
 
   // Only perform one operation.
   enum MetadataChange {
