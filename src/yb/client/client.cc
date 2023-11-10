@@ -1470,7 +1470,8 @@ Status YBClient::GetCDCStream(
     NamespaceId* ns_id,
     std::vector<ObjectId>* object_ids,
     std::unordered_map<std::string, std::string>* options,
-    cdc::StreamModeTransactional* transactional) {
+    cdc::StreamModeTransactional* transactional,
+    std::optional<uint64>* consistent_snapshot_time) {
   // Setting up request.
   GetCDCStreamRequestPB req;
   req.set_stream_id(stream_id.ToString());
@@ -1499,6 +1500,9 @@ Status YBClient::GetCDCStream(
   }
 
   *transactional = cdc::StreamModeTransactional(resp.stream().transactional());
+  if (resp.stream().has_consistent_snapshot_time() && consistent_snapshot_time) {
+    *consistent_snapshot_time = resp.stream().consistent_snapshot_time();
+  }
 
   return Status::OK();
 }

@@ -2161,7 +2161,8 @@ Status GetChangesForCDCSDK(
     const int& wal_segment_index_req,
     int64_t* last_readable_opid_index,
     const TableId& colocated_table_id,
-    const CoarseTimePoint deadline) {
+    const CoarseTimePoint deadline,
+    const std::optional<uint64>& consistent_snapshot_time) {
   OpId op_id{from_op_id.term(), from_op_id.index()};
   VLOG(1) << "GetChanges request has from_op_id: " << from_op_id.DebugString()
           << ", safe_hybrid_time: " << safe_hybrid_time_req
@@ -2359,8 +2360,20 @@ Status GetChangesForCDCSDK(
         // We should not stream messages we have already streamed again in this case,
         // except for "SPLIT_OP" messages which can appear with a hybrid_time lower than
         // safe_hybrid_time_req.
-        if (FLAGS_cdc_enable_consistent_records && safe_hybrid_time_req >= 0 &&
-            GetTransactionCommitTime(msg) <= (uint64_t)safe_hybrid_time_req &&
+
+        uint64_t commit_time_threshold = 0;
+        if (consistent_snapshot_time.has_value()) {
+          if (safe_hybrid_time_req >= 0) {
+            commit_time_threshold = std::max((uint64_t)safe_hybrid_time_req, *consistent_snapshot_time);
+          } else {
+            commit_time_threshold = *consistent_snapshot_time;
+          }
+        }
+        LOG(INFO) << "Commit time Threshold = " << commit_time_threshold;
+        LOG(INFO) << "Txn commit time       = " << GetTransactionCommitTime(msg);
+
+        if (FLAGS_cdc_enable_consistent_records && 
+            GetTransactionCommitTime(msg) <= commit_time_threshold &&
             msg->op_type() != yb::consensus::OperationType::SPLIT_OP) {
           VLOG_WITH_FUNC(2)
               << "Received a message in wal_segment with commit_time <= request safe time."

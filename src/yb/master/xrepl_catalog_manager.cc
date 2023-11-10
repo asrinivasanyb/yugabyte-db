@@ -881,12 +881,19 @@ Status CatalogManager::CreateNewXReplStream(
       }
     }
 
+    // For CDCSDK, set state to INITIATED
+    if (mode == CreateNewCDCStreamMode::kCdcsdkNamespaceAndTableIds) {
+      metadata->set_state(
+        req.has_initial_state() ? req.initial_state() : SysCDCStreamEntryPB::INITIATED);
+    } else {
+      metadata->set_state(
+        req.has_initial_state() ? req.initial_state() : SysCDCStreamEntryPB::ACTIVE);
+    }
+
     metadata->set_transactional(req.transactional());
 
     metadata->mutable_options()->CopyFrom(req.options());
-    metadata->set_state(
-        req.has_initial_state() ? req.initial_state() : SysCDCStreamEntryPB::ACTIVE);
-
+    
     if (req.has_cdcsdk_ysql_replication_slot_name()) {
       metadata->set_cdcsdk_ysql_replication_slot_name(req.cdcsdk_ysql_replication_slot_name());
     }
@@ -983,15 +990,15 @@ Status CatalogManager::CreateNewXReplStream(
     // mechanism through which consistency is established
     if (has_consistent_snapshot_option) {
       consistent_snapshot_time = Clock()->Now().ToUint64();
-      LOG(INFO) << "Consistent Snapshot Time = " << consistent_snapshot_time;
-
-      // Save the consistent_snapshot_time in the SysCDCStreamEntryPB catalog
-      stream->mutable_metadata()->StartMutation();
-      auto* metadata = &stream->mutable_metadata()->mutable_dirty()->pb;
-      metadata->set_snapshot_time(consistent_snapshot_time);
-      stream->mutable_metadata()->CommitMutation();
-      LOG(INFO) << "Updating stream metadata with snapshot time " << stream->ToString();
+      LOG(INFO) << "Consistent Snapshot Time = " << consistent_snapshot_time;  
     }
+    // Save the consistent_snapshot_time in the SysCDCStreamEntryPB catalog
+    stream->mutable_metadata()->StartMutation();
+    auto* metadata = &stream->mutable_metadata()->mutable_dirty()->pb;
+    metadata->set_snapshot_time(consistent_snapshot_time);
+    metadata->set_state(SysCDCStreamEntryPB::ACTIVE);
+    stream->mutable_metadata()->CommitMutation();
+    LOG(INFO) << "Updating stream metadata with snapshot time " << stream->ToString();
   }
 
   std::vector<cdc::CDCStateTableEntry> entries;
@@ -1937,6 +1944,11 @@ Status CatalogManager::GetCDCStream(
   if (stream_lock->pb.has_cdcsdk_ysql_replication_slot_name()) {
     stream_info->set_cdcsdk_ysql_replication_slot_name(
         stream_lock->pb.cdcsdk_ysql_replication_slot_name());
+  }
+
+  if (stream_lock->pb.has_snapshot_time()) {
+    stream_info->set_consistent_snapshot_time(
+        stream_lock->pb.snapshot_time());
   }
 
   return Status::OK();

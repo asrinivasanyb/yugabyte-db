@@ -108,9 +108,11 @@ Status StreamMetadata::GetStreamInfoFromMaster(
   NamespaceId namespace_id;
   std::unordered_map<std::string, std::string> options;
   StreamModeTransactional transactional(false);
+  std::optional<uint64> consistent_snapshot_time;
 
   RETURN_NOT_OK(
-      client->GetCDCStream(stream_id, &namespace_id, &object_ids, &options, &transactional));
+      client->GetCDCStream(stream_id, &namespace_id, &object_ids, &options, &transactional,
+                           &consistent_snapshot_time));
 
   AddDefaultOptionsIfMissing(&options);
 
@@ -159,6 +161,10 @@ Status StreamMetadata::GetStreamInfoFromMaster(
   }
 
   transactional_.store(transactional, std::memory_order_release);
+  if (consistent_snapshot_time.has_value()) {
+    consistent_snapshot_time_.store(*consistent_snapshot_time, std::memory_order_release);
+  }
+
   if (!is_refresh) {
     loaded_.store(true, std::memory_order_release);
   }
