@@ -1549,6 +1549,10 @@ void CDCServiceImpl::GetChanges(
   }
 
   std::optional<uint64_t> consistent_snapshot_time = record.GetConsistentSnapshotTime();
+  if (consistent_snapshot_time.has_value()) {
+    VLOG(2) << "GetChanges consistent snapshot time from metadata = "
+            << *consistent_snapshot_time;
+  }
 
   // Get opId from request.
   if (!GetFromOpId(req, &from_op_id, &cdc_sdk_from_op_id)) {
@@ -1652,7 +1656,8 @@ void CDCServiceImpl::GetChanges(
     status = GetChangesForCDCSDK(
         stream_id, req->tablet_id(), cdc_sdk_from_op_id, record, tablet_peer, mem_tracker, enum_map,
         composite_atts_map, client(), &msgs_holder, resp, &commit_timestamp, &cached_schema_details,
-        &last_streamed_op_id, req->safe_hybrid_time(), consistent_snapshot_time,
+        &last_streamed_op_id, req->safe_hybrid_time(),
+        consistent_snapshot_time,
         req->wal_segment_index(),
         &last_readable_index, tablet_peer->tablet_metadata()->colocated() ? req->table_id() : "",
         get_changes_deadline);

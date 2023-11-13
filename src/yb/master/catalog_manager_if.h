@@ -299,6 +299,7 @@ class CatalogManagerIf {
   virtual Status PromoteTableToRunningState(TableInfoPtr table_info, const LeaderEpoch& epoch) = 0;
 
   virtual Status PopulateCDCStateTableWithSnapshotSafeOpIdDetails(
+      const scoped_refptr<TableInfo>& table,
       const yb::TabletId& tablet_id,
       const std::string& cdc_sdk_stream_id,
       const yb::OpIdPB& safe_opid,

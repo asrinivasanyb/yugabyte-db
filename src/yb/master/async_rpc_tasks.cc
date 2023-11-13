@@ -1049,7 +1049,7 @@ void AsyncAlterTable::HandleResponse(int attempt) {
     if (!cdc_sdk_stream_id_.empty()) {
         WARN_NOT_OK(
             master_->catalog_manager()->PopulateCDCStateTableWithSnapshotSafeOpIdDetails(
-                tablet_id(), cdc_sdk_stream_id_, resp_.snapshot_safe_op_id(),
+                table(), tablet_id(), cdc_sdk_stream_id_, resp_.snapshot_safe_op_id(),
                 HybridTime::FromPB(resp_.propagated_hybrid_time()), cdc_require_history_cutoff_),
             Format(
               "$0 failed while running AsyncAlterTable::HandleResponse. Response $1", description(),

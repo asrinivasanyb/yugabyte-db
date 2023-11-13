@@ -893,7 +893,7 @@ Status CatalogManager::CreateNewXReplStream(
     metadata->set_transactional(req.transactional());
 
     metadata->mutable_options()->CopyFrom(req.options());
-    
+
     if (req.has_cdcsdk_ysql_replication_slot_name()) {
       metadata->set_cdcsdk_ysql_replication_slot_name(req.cdcsdk_ysql_replication_slot_name());
     }
@@ -972,6 +972,7 @@ Status CatalogManager::CreateNewXReplStream(
 
     has_consistent_snapshot_option =
       has_consistent_snapshot_option && FLAGS_TEST_yb_enable_cdc_consistent_snapshot_streams;
+
     if (has_consistent_snapshot_option) {
       // TEMPORARY: The creation of the cdc_state table sometimes interferes with the write into
       // the table from the AsyncAlterTable callback
@@ -990,7 +991,7 @@ Status CatalogManager::CreateNewXReplStream(
     // mechanism through which consistency is established
     if (has_consistent_snapshot_option) {
       consistent_snapshot_time = Clock()->Now().ToUint64();
-      LOG(INFO) << "Consistent Snapshot Time = " << consistent_snapshot_time;  
+      LOG(INFO) << "Consistent Snapshot Time = " << consistent_snapshot_time;
     }
     // Save the consistent_snapshot_time in the SysCDCStreamEntryPB catalog
     stream->mutable_metadata()->StartMutation();
@@ -999,39 +1000,75 @@ Status CatalogManager::CreateNewXReplStream(
     metadata->set_state(SysCDCStreamEntryPB::ACTIVE);
     stream->mutable_metadata()->CommitMutation();
     LOG(INFO) << "Updating stream metadata with snapshot time " << stream->ToString();
+    RETURN_NOT_OK(PopulateCDCStateTable(stream->StreamId(), table_ids,
+                                        has_consistent_snapshot_option,
+                                        consistent_snapshot_option_use,
+                                        consistent_snapshot_time));
+  } else {
+    DCHECK(mode == CreateNewCDCStreamMode::kXClusterTableIds);
+    std::vector<cdc::CDCStateTableEntry> entries;
+    for (const auto& table_id : table_ids) {
+      auto table = VERIFY_RESULT(FindTableById(table_id));
+      for (const auto& tablet : table->GetTablets()) {
+        cdc::CDCStateTableEntry entry(tablet->id(), stream->StreamId());
+        entry.checkpoint = OpId().Min();
+        entry.last_replication_time = GetCurrentTimeMicros();
+        entries.push_back(std::move(entry));
+      }
+    }
+    RETURN_NOT_OK(cdc_state_table_->InsertEntries(entries));
   }
+
+  TRACE("Created CDC state entries");
+  return Status::OK();
+}
+
+Status CatalogManager::PopulateCDCStateTable(const xrepl::StreamId& stream_id,
+                                             const std::vector<TableId>& table_ids,
+                                             const bool has_consistent_snapshot_option,
+                                             const bool consistent_snapshot_option_use,
+                                             const uint64_t consistent_snapshot_time) {
 
   std::vector<cdc::CDCStateTableEntry> entries;
   for (const auto& table_id : table_ids) {
+    LOG(INFO) << "Table: " << table_id;
     auto table = VERIFY_RESULT(FindTableById(table_id));
     for (const auto& tablet : table->GetTablets()) {
-      cdc::CDCStateTableEntry entry(tablet->id(), stream->StreamId());
-      if (mode == CreateNewCDCStreamMode::kCdcsdkNamespaceAndTableIds) {
-        if (has_consistent_snapshot_option) {
-          // For USE_SNAPSHOT option, leave entry in POST_SNAPSHOT_BOOTSTRAP state
-          // For NOEXPORT_SNAPSHOT option, leave entry in SNAPSHOT_DONE state
-          if (consistent_snapshot_option_use)
-            entry.snapshot_key = "";
+      cdc::CDCStateTableEntry entry(tablet->id(), stream_id);
+      LOG(INFO) << "Tablet: " << tablet->id();
+      if (has_consistent_snapshot_option) {
+        LOG(INFO) << "Preparing cdc state table entry for CS stream";
+        // For USE_SNAPSHOT option, leave entry in POST_SNAPSHOT_BOOTSTRAP state
+        // For NOEXPORT_SNAPSHOT option, leave entry in SNAPSHOT_DONE state
+        if (consistent_snapshot_option_use)
+          entry.snapshot_key = "";
 
-          entry.active_time = GetCurrentTimeMicros();
-          entry.cdc_sdk_safe_time = consistent_snapshot_time;
-        } else {
-          entry.checkpoint = OpId().Invalid();
-          entry.active_time = 0;
-          entry.cdc_sdk_safe_time = 0;
-        }
+        entry.active_time = GetCurrentTimeMicros();
+        entry.cdc_sdk_safe_time = consistent_snapshot_time;
       } else {
-        DCHECK(mode == CreateNewCDCStreamMode::kXClusterTableIds);
-        entry.checkpoint = OpId().Min();
-        entry.last_replication_time = GetCurrentTimeMicros();
+        LOG(INFO) << "Preparing cdc state table entry for non CS stream";
+        entry.checkpoint = OpId().Invalid();
+        entry.active_time = 0;
+        entry.cdc_sdk_safe_time = 0;
       }
       entries.push_back(std::move(entry));
+
+      // For a consistent snapshot streamm, if it is a Colocated table,
+      // add the colocated table snapshot entry also
+      if (has_consistent_snapshot_option && table->colocated()) {
+        LOG(INFO) << "cdc_state table snapshot Colocated row for table: " << table_id;
+        cdc::CDCStateTableEntry col_entry(tablet->id(), stream_id, table_id);
+        if (consistent_snapshot_option_use)
+          col_entry.snapshot_key = "";
+
+        col_entry.active_time = GetCurrentTimeMicros();
+        col_entry.cdc_sdk_safe_time = consistent_snapshot_time;
+        entries.push_back(std::move(col_entry));
+      }
     }
   }
 
-  RETURN_NOT_OK(cdc_state_table_->UpsertEntries(entries));
-  TRACE("Created CDC state entries");
-  return Status::OK();
+  return cdc_state_table_->UpsertEntries(entries);
 }
 
 Status CatalogManager::AddTableIdToCDCStream(const CreateCDCStreamRequestPB& req) {
@@ -1152,13 +1189,15 @@ Status CatalogManager::SetWalRetentionForTable(
 }
 
 Status CatalogManager::PopulateCDCStateTableWithSnapshotSafeOpIdDetails(
+    const scoped_refptr<TableInfo>& table,
     const yb::TabletId& tablet_id,
     const std::string&  cdc_sdk_stream_id,
     const yb::OpIdPB&   snapshot_safe_opid,
     const yb::HybridTime& proposed_snapshot_time,
     const bool require_history_cutoff) {
 
-  LOG_WITH_FUNC(INFO) << "Tablet id: " << tablet_id
+  LOG_WITH_FUNC(INFO) << "Table id: " << table->id()
+                      << "Tablet id: " << tablet_id
                       << ", Stream id:" << cdc_sdk_stream_id
                       << ", snapshot safe opid: " << snapshot_safe_opid.term()
                       << " and " << snapshot_safe_opid.index()
@@ -1169,6 +1208,8 @@ Status CatalogManager::PopulateCDCStateTableWithSnapshotSafeOpIdDetails(
 
   xrepl::StreamId stream_id = VERIFY_RESULT(xrepl::StreamId::FromString(cdc_sdk_stream_id));
 
+  std::vector<cdc::CDCStateTableEntry> entries;
+
   cdc::CDCStateTableEntry entry(tablet_id, stream_id);
   entry.checkpoint = OpId::FromPB(snapshot_safe_opid);
   entry.cdc_sdk_safe_time = proposed_snapshot_time.ToUint64();
@@ -1177,8 +1218,22 @@ Status CatalogManager::PopulateCDCStateTableWithSnapshotSafeOpIdDetails(
 
   entry.active_time = GetCurrentTimeMicros();
   entry.last_replication_time = proposed_snapshot_time.GetPhysicalValueMicros();
+  entries.push_back(std::move(entry));
 
-  RETURN_NOT_OK(cdc_state_table_->InsertEntries({entry}));
+  // add the colocated table snapshot row if it is a colocated table
+  if (table->colocated()) {
+    cdc::CDCStateTableEntry col_entry(tablet_id, stream_id, table->id());
+    col_entry.checkpoint = OpId::FromPB(snapshot_safe_opid);
+    col_entry.cdc_sdk_safe_time = proposed_snapshot_time.ToUint64();
+    if (require_history_cutoff)
+      col_entry.snapshot_key = "";
+
+    col_entry.active_time = GetCurrentTimeMicros();
+    col_entry.last_replication_time = proposed_snapshot_time.GetPhysicalValueMicros();
+    entries.push_back(std::move(col_entry));
+  }
+
+  RETURN_NOT_OK(cdc_state_table_->InsertEntries(entries));
 
   return Status::OK();
 }

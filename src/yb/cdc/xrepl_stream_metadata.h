@@ -113,7 +113,7 @@ class StreamMetadata {
   std::optional<uint64_t> GetConsistentSnapshotTime() const {
     DCHECK(loaded_);
     return consistent_snapshot_time_.load(std::memory_order_acquire);
-  };
+  }
 
 
   std::shared_ptr<StreamTabletMetadata> GetTabletMetadata(const TabletId& tablet_id)
